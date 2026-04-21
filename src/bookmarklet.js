@@ -290,6 +290,31 @@
   function uid() {
     return 'cap_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
   }
+  // Clean outerHTML: remove elements that don't affect visual design
+  function cleanHTML(el) {
+    const clone = el.cloneNode(true);
+    // Remove non-visual elements
+    clone.querySelectorAll(
+      'script, iframe, noscript, ins.adsbygoogle, [data-ad-client], ' +
+      '[data-google-container-id], style:not([data-chromecap])'
+    ).forEach(n => n.remove());
+    // Strip tracking/analytics attributes
+    clone.querySelectorAll('[onclick], [onload], [onerror]').forEach(n => {
+      n.removeAttribute('onclick');
+      n.removeAttribute('onload');
+      n.removeAttribute('onerror');
+    });
+    // Strip data-ad-*, data-google-* attributes from remaining elements
+    clone.querySelectorAll('*').forEach(n => {
+      for (const attr of [...n.attributes]) {
+        if (/^data-(ad|google|adsbygoogle|load-complete)/.test(attr.name)) {
+          n.removeAttribute(attr.name);
+        }
+      }
+    });
+    return clone.outerHTML;
+  }
+
   async function capture(target) {
     await fixCorsSheets();
     const r = target.getBoundingClientRect();
@@ -302,7 +327,7 @@
       title: document.title,
       timestamp: new Date().toISOString(),
       innerText: target.innerText || '',
-      outerHTML: target.outerHTML,
+      outerHTML: cleanHTML(target),
       rect: {
         x: Math.round(r.x), y: Math.round(r.y),
         width: Math.round(r.width), height: Math.round(r.height),
