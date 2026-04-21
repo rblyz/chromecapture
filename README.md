@@ -44,6 +44,13 @@ Recreate these components using React + Tailwind CSS, matching the visual
 appearance as closely as possible.
 ```
 
+## Features
+
+- **Cross-origin CSS fetching** — automatically fetches and injects stylesheets blocked by CSSOM CORS restrictions, so `cssRules` works on most sites even with external CSS
+- **Pseudo-state capture** — detects `:hover`, `:focus`, `:active`, `:disabled` and other state-based CSS rules, tagged with a `"states"` field so the LLM knows which styles apply to which interaction state
+- **Smart filtering** — strips universal selectors (`*`), Tailwind CSS variable resets, `prefers-reduced-motion` rules, and deduplicates identical rules to keep output compact
+- **Responsive breakpoints** — preserves `@media` queries so the LLM can reproduce adaptive layouts
+
 ## Output Format
 
 See [docs/capture-format.md](docs/capture-format.md) for the full specification.
@@ -51,14 +58,14 @@ See [docs/capture-format.md](docs/capture-format.md) for the full specification.
 Each capture includes:
 - `outerHTML` — full DOM structure
 - `computedStyles` — only non-default CSS properties (compact, no noise)
-- `cssRules` — matching stylesheet rules with media queries
+- `cssRules` — matching stylesheet rules with media queries and pseudo-states
 - `rect` — bounding box dimensions
 - Page context (`url`, `title`, `timestamp`)
 
 ## Limitations
 
-- **CSP restrictions**: Some sites (GitHub, Google, etc.) block inline scripts via Content-Security-Policy. The bookmarklet won't work on these sites. A Chrome extension version would bypass this — contributions welcome.
-- **CORS stylesheets**: CSS from cross-origin stylesheets (CDNs without CORS headers) can't be read. Computed styles still work, but `cssRules` will be empty for those rules.
+- **CSP restrictions**: Some sites (GitHub, Google, etc.) block inline scripts via Content-Security-Policy. The bookmarklet won't work on these sites. A Chrome extension version would bypass this.
+- **Opaque CORS responses**: If a CDN blocks `fetch()` too (not just CSSOM), those rules remain inaccessible. Computed styles still work.
 - **Shadow DOM**: Elements inside closed shadow roots are not accessible.
 
 ## Development

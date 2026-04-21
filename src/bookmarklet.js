@@ -135,13 +135,35 @@
   }
 
   // --- CSS rule extraction --------------------------------------------------
+  const PSEUDO_RE = /:(hover|focus|focus-within|focus-visible|active|visited|disabled|checked|enabled|read-only|placeholder-shown|invalid|valid|required)(?![-(])/g;
+  function matchesWithPseudo(target, selectorText) {
+    // Direct match (current state)
+    try { if (target.matches(selectorText)) return { match: true }; } catch {}
+    // Try stripping pseudo-class states to find rules for other states
+    if (PSEUDO_RE.test(selectorText)) {
+      PSEUDO_RE.lastIndex = 0;
+      const stripped = selectorText.replace(PSEUDO_RE, '').replace(/::?$/g, '');
+      if (!stripped) return { match: false };
+      try {
+        if (target.matches(stripped)) {
+          const pseudos = [];
+          let m; PSEUDO_RE.lastIndex = 0;
+          while ((m = PSEUDO_RE.exec(selectorText))) pseudos.push(m[1]);
+          return { match: true, states: pseudos };
+        }
+      } catch {}
+    }
+    return { match: false };
+  }
   function walkRules(rules, target, acc, media) {
     for (const r of rules) {
       try {
         if (r.selectorText) {
-          if (target.matches(r.selectorText)) {
+          const res = matchesWithPseudo(target, r.selectorText);
+          if (res.match) {
             const entry = { selector: r.selectorText, css: r.style.cssText };
             if (media) entry.media = media;
+            if (res.states) entry.states = res.states;
             acc.push(entry);
           }
         }
@@ -163,12 +185,33 @@
     if (media && /prefers-reduced-motion/.test(media)) return true;
     return false;
   }
+  // Fetch cross-origin stylesheets and parse them into a temporary sheet
+  // so we can read their rules via the CSSOM.
+  let _corsFixed = false;
+  async function fixCorsSheets() {
+    if (_corsFixed) return;
+    _corsFixed = true;
+    const fetches = [];
+    for (const sh of document.styleSheets) {
+      try { sh.cssRules; continue; } catch {} // already accessible
+      if (!sh.href) continue;
+      fetches.push(
+        fetch(sh.href).then(r => r.text()).then(css => {
+          const s = document.createElement('style');
+          s.dataset.chromecap = '1';
+          s.textContent = css;
+          document.head.appendChild(s);
+        }).catch(() => {})
+      );
+    }
+    await Promise.all(fetches);
+  }
   function getRules(target) {
     const acc = [];
     const seen = new Set();
     for (const sh of document.styleSheets) {
       let rules;
-      try { rules = sh.cssRules; } catch { continue; } // CORS
+      try { rules = sh.cssRules; } catch { continue; }
       walkRules(rules, target, acc, (sh.media && sh.media.mediaText) || undefined);
     }
     return acc.filter(r => {
@@ -232,7 +275,8 @@
   function uid() {
     return 'cap_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
   }
-  function capture(target) {
+  async function capture(target) {
+    await fixCorsSheets();
     const r = target.getBoundingClientRect();
     captures.push({
       id: uid(),
