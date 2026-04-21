@@ -206,6 +206,16 @@
     }
     await Promise.all(fetches);
   }
+  // Resolve var(--xxx) references to their computed values
+  function resolveVars(cssText, target) {
+    const root = getComputedStyle(document.documentElement);
+    const elCS = getComputedStyle(target);
+    return cssText.replace(/var\(--[\w-]+(?:\s*,\s*[^)]+)?\)/g, m => {
+      const name = m.match(/var\((--[\w-]+)/)[1];
+      const val = elCS.getPropertyValue(name).trim() || root.getPropertyValue(name).trim();
+      return val ? val : m;
+    });
+  }
   function getRules(target) {
     const acc = [];
     const seen = new Set();
@@ -220,6 +230,11 @@
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
+    }).map(r => {
+      if (r.css.includes('var(--')) {
+        r.cssResolved = resolveVars(r.css, target);
+      }
+      return r;
     });
   }
 
