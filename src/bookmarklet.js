@@ -153,14 +153,31 @@
       } catch {}
     }
   }
+  function isJunkRule(selector, css, media) {
+    // Universal selectors (CSS resets, Tailwind variable declarations)
+    const sel = selector.replace(/\s+/g, ' ').trim();
+    if (/^\*(\s*,\s*(::?\w+))*$/.test(sel)) return true;
+    // CSS that only sets --tw- or --default- custom properties
+    if (/^(--.+?:\s*[^;]*;\s*)+$/.test(css) && !css.replace(/--[\w-]+:\s*[^;]*;?\s*/g, '').trim()) return true;
+    // prefers-reduced-motion rules
+    if (media && /prefers-reduced-motion/.test(media)) return true;
+    return false;
+  }
   function getRules(target) {
     const acc = [];
+    const seen = new Set();
     for (const sh of document.styleSheets) {
       let rules;
       try { rules = sh.cssRules; } catch { continue; } // CORS
       walkRules(rules, target, acc, (sh.media && sh.media.mediaText) || undefined);
     }
-    return acc;
+    return acc.filter(r => {
+      if (isJunkRule(r.selector, r.css, r.media)) return false;
+      const key = r.selector + '|' + r.css + '|' + (r.media || '');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   // --- Computed styles (curated) --------------------------------------------
