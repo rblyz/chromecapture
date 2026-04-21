@@ -315,10 +315,74 @@
     return clone.outerHTML;
   }
 
+  // --- Accessibility & semantics --------------------------------------------
+  function getAccessibleName(el) {
+    // aria-labelledby → aria-label → alt → title → label[for] → innerText (short)
+    const lblBy = el.getAttribute('aria-labelledby');
+    if (lblBy) {
+      const txt = lblBy.split(/\s+/).map(id => {
+        const ref = document.getElementById(id);
+        return ref ? ref.textContent.trim() : '';
+      }).filter(Boolean).join(' ');
+      if (txt) return txt;
+    }
+    if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+    if (el.alt) return el.alt;
+    if (el.title) return el.title;
+    if (el.id) {
+      const lbl = document.querySelector('label[for="' + el.id + '"]');
+      if (lbl) return lbl.textContent.trim();
+    }
+    if (el.placeholder) return el.placeholder;
+    return '';
+  }
+  function getSemantics(target) {
+    const s = {};
+    // Role: explicit ARIA or implicit from tag
+    const role = target.getAttribute('role');
+    if (role) s.role = role;
+    // Accessible name
+    const name = getAccessibleName(target);
+    if (name) s.accessibleName = name;
+    // Interactive states (only non-default)
+    if (target.disabled) s.disabled = true;
+    if (target.getAttribute('aria-hidden') === 'true') s.ariaHidden = true;
+    if (target.hasAttribute('aria-expanded')) s.ariaExpanded = target.getAttribute('aria-expanded') === 'true';
+    if (target.hasAttribute('aria-pressed')) s.ariaPressed = target.getAttribute('aria-pressed');
+    if (target.checked) s.checked = true;
+    if (target.required) s.required = true;
+    if (target.readOnly) s.readOnly = true;
+    // Form context
+    const form = target.closest('form');
+    if (form) {
+      s.formAction = form.action || undefined;
+      s.formMethod = form.method || undefined;
+    }
+    if (target.formAction && target.formAction !== location.href) s.formAction = target.formAction;
+    // Form fields (if target is or contains a form)
+    const inputs = target.tagName === 'FORM'
+      ? target.querySelectorAll('input, select, textarea')
+      : target.querySelectorAll('form input, form select, form textarea');
+    if (inputs.length) {
+      s.formFields = [...inputs].slice(0, 20).map(inp => {
+        const f = { tag: inp.tagName.toLowerCase() };
+        if (inp.type && inp.type !== 'text') f.type = inp.type;
+        if (inp.name) f.name = inp.name;
+        if (inp.placeholder) f.placeholder = inp.placeholder;
+        const an = getAccessibleName(inp);
+        if (an) f.label = an;
+        if (inp.required) f.required = true;
+        return f;
+      });
+    }
+    return Object.keys(s).length ? s : undefined;
+  }
+
   async function capture(target) {
     await fixCorsSheets();
     const r = target.getBoundingClientRect();
-    captures.push({
+    const semantics = getSemantics(target);
+    const cap = {
       id: uid(),
       selector: selApprox(target),
       label: mkLabel(target),
@@ -334,7 +398,9 @@
       },
       computedStyles: getComputed(target),
       cssRules: getRules(target),
-    });
+    };
+    if (semantics) cap.semantics = semantics;
+    captures.push(cap);
     render();
   }
 

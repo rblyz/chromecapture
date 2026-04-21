@@ -50,6 +50,9 @@ appearance as closely as possible.
 - **Pseudo-state capture** — detects `:hover`, `:focus`, `:active`, `:disabled` and other state-based CSS rules, tagged with a `"states"` field so the LLM knows which styles apply to which interaction state
 - **Smart filtering** — strips universal selectors (`*`), Tailwind CSS variable resets, `prefers-reduced-motion` rules, and deduplicates identical rules to keep output compact
 - **Responsive breakpoints** — preserves `@media` queries so the LLM can reproduce adaptive layouts
+- **CSS variable resolution** — resolves `var(--token)` to actual values (e.g. `var(--color-17)` → `#f74068`), keeping token names in `css` and resolved values in `cssResolved`
+- **Semantics & accessibility** — captures `role`, `accessibleName`, `aria-*` states, `formAction`, `formMethod`, and form fields when present (only added when non-empty)
+- **HTML sanitization** — strips `<script>`, `<iframe>`, ads, tracking attributes from `outerHTML`, keeping only design-relevant markup
 
 ## Output Format
 
@@ -60,6 +63,7 @@ Each capture includes:
 - `computedStyles` — only non-default CSS properties (compact, no noise)
 - `cssRules` — matching stylesheet rules with media queries and pseudo-states
 - `rect` — bounding box dimensions
+- `semantics` — accessible name, ARIA states, form context (when present)
 - Page context (`url`, `title`, `timestamp`)
 
 ## Limitations
