@@ -1,0 +1,18 @@
+{
+  "name": "chrome-capture",
+  "version": "0.1.0",
+  "description": "Capture web elements with styles for LLM-powered design reproduction",
+  "license": "MIT",
+  "scripts": {
+    "build": "node src/build.js"
+  },
+  "keywords": [
+    "chrome",
+    "bookmarklet",
+    "design-system",
+    "llm",
+    "capture",
+    "css",
+    "web-scraping"
+  ]
+}
