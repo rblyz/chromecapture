@@ -291,6 +291,7 @@
     return 'cap_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
   }
   // Clean outerHTML: remove elements that don't affect visual design
+  const TRACKER_RE = /^data-(ad|google|adsbygoogle|load-complete|gtm|fb[-p]?|analytics|track|event|segment|amplitude|amp|mp|mixpanel|hj|hotjar|heap|intercom|pendo|clarity|ga4?)(-|$)/;
   function cleanHTML(el) {
     const clone = el.cloneNode(true);
     // Remove non-visual elements
@@ -298,16 +299,10 @@
       'script, iframe, noscript, ins.adsbygoogle, [data-ad-client], ' +
       '[data-google-container-id], style:not([data-chromecap])'
     ).forEach(n => n.remove());
-    // Strip tracking/analytics attributes
-    clone.querySelectorAll('[onclick], [onload], [onerror]').forEach(n => {
-      n.removeAttribute('onclick');
-      n.removeAttribute('onload');
-      n.removeAttribute('onerror');
-    });
-    // Strip data-ad-*, data-google-* attributes from remaining elements
+    // Strip all inline event handlers and tracker data-attributes
     clone.querySelectorAll('*').forEach(n => {
       for (const attr of [...n.attributes]) {
-        if (/^data-(ad|google|adsbygoogle|load-complete)/.test(attr.name)) {
+        if (attr.name.startsWith('on') || TRACKER_RE.test(attr.name)) {
           n.removeAttribute(attr.name);
         }
       }
