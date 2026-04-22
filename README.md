@@ -1,6 +1,6 @@
 # Chrome Capture
 
-Capture any UI element from any website and reproduce it with an LLM.
+Capture any UI element from any website and reproduce it with ANY LLM (Claude, ChatGPT, Gemini, etc.).
 
 ![Chrome Capture on Stripe.com](docs/images/browser-full.png)
 
@@ -30,8 +30,9 @@ That's it. No build, no extension, no dependencies.
 
 - **Esc** — stop picking
 - **Alt+P** (Option+P on Mac) — toggle picker without clicking, keeps dropdowns/modals open
-- **Mode toggle** (`all` / `structure`) — `all` captures full content, `structure` captures layout skeleton only
+- **Mode toggle** (`all` / `structure`) — `all` captures everything as-is; `structure` strips text nodes and replaces complex inline SVGs with placeholders, keeping only the layout skeleton
 - **X** — remove individual captures before copying
+- **Smaller is better** — the smaller the captured element, the more detail the LLM can work with. Start with a large section in `structure` mode to get the layout, then capture individual components in `all` mode for full detail
 
 ## What gets captured
 
