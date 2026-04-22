@@ -14,9 +14,9 @@
     txPri:    'rgba(15,12,8,0.92)',
     txSec:    'rgba(15,12,8,0.64)',
     txTer:    'rgba(15,12,8,0.60)',
-    accent:   '#D97757',
-    accentHv: '#C46A4D',
-    accentAc: '#B05E43',
+    accent:   '#7C3AED',
+    accentHv: '#6D28D9',
+    accentAc: '#5B21B6',
     shadow:   '0 10px 15px rgba(20,20,19,0.08), 0 4px 6px rgba(20,20,19,0.04)',
   };
   const FONT = "'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
@@ -33,14 +33,15 @@
   };
 
   // --- Highlight box --------------------------------------------------------
+  const HL_COLOR = '#EF4444';
   const hl = el('div',
     'position:fixed;pointer-events:none;z-index:2147483646;' +
-    'border:2px solid ' + C.accent + ';background:rgba(217,119,87,.12);' +
+    'border:2px solid ' + HL_COLOR + ';background:rgba(239,68,68,.10);' +
     'border-radius:3px;box-sizing:border-box;display:none;' +
     'transition:all 40ms linear;');
   const hlLabel = el('div',
     'position:absolute;top:-22px;left:0;padding:2px 7px;' +
-    'background:' + C.accent + ';color:#fff;font:11px/1.4 ' + FONT + ';' +
+    'background:' + HL_COLOR + ';color:#fff;font:11px/1.4 ' + FONT + ';' +
     'border-radius:4px;white-space:nowrap;font-weight:500;');
   hl.appendChild(hlLabel);
 
@@ -73,7 +74,7 @@
   // Hint
   const hint = el('div',
     'font-size:11px;color:' + C.txSec + ';line-height:1.5;',
-    'Click elements on the page to capture them. Press Esc to stop picking.');
+    'Click elements to capture. Esc = stop picking. Alt+P = toggle picker (keeps dropdowns open).');
 
   // Capture list
   const list = el('div',
@@ -125,7 +126,7 @@
       'border:1px solid ' + (primary ? 'rgba(0,0,0,.15)' : C.bdDef) + ';' +
       'background:' + (primary ? C.accent : C.bgSurf) + ';' +
       'color:' + (primary ? '#FAF9F5' : C.txPri) + ';' +
-      (primary ? 'box-shadow:0 1px 3px rgba(180,90,30,.35),inset 0 1px 0 rgba(255,255,255,.15);' : ''),
+      (primary ? 'box-shadow:0 1px 3px rgba(91,33,182,.35),inset 0 1px 0 rgba(255,255,255,.15);' : ''),
       label);
     b.onmouseenter = () => b.style.background = primary ? C.accentHv : C.bgHover;
     b.onmouseleave = () => b.style.background = primary ? C.accent : C.bgSurf;
@@ -472,10 +473,22 @@
     document.removeEventListener('keydown', onKey, true);
   }
   function destroy() {
-    stop(); panel.remove(); style.remove(); delete window.__chromeCap;
+    stop(); panel.remove(); style.remove();
+    document.removeEventListener('keydown', onGlobalKey, true);
+    delete window.__chromeCap;
   }
 
   // --- Wire up --------------------------------------------------------------
+  // Global hotkey: Alt+P toggles picker without stealing focus or closing dropdowns
+  // Uses e.code (physical key) so it works regardless of layout or macOS Option-symbol input
+  function onGlobalKey(e) {
+    if (e.altKey && e.code === 'KeyP') {
+      e.preventDefault(); e.stopPropagation();
+      picking ? stop() : start();
+    }
+  }
+  document.addEventListener('keydown', onGlobalKey, true);
+
   pickBtn.onclick = () => picking ? stop() : start();
   copyBtn.onclick = () => {
     if (!out.value) return;
