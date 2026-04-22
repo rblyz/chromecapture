@@ -298,7 +298,7 @@
   }
   // Clean outerHTML: remove elements that don't affect visual design
   const TRACKER_RE = /^data-(ad|google|adsbygoogle|load-complete|gtm|fb[-p]?|analytics|track|event|segment|amplitude|amp|mp|mixpanel|hj|hotjar|heap|intercom|pendo|clarity|ga4?)(-|$)/;
-  const SVG_MAX = 200;
+  const SVG_INLINE_MAX = 500;
   function cleanHTML(el) {
     const clone = el.cloneNode(true);
     // Remove non-visual elements + our own panel
@@ -325,7 +325,10 @@
     // Structure mode: simplify SVGs and strip text nodes
     if (captureMode === 'structure') {
       clone.querySelectorAll('svg').forEach(svg => {
-        if (svg.outerHTML.length > SVG_MAX) {
+        // Keep SVGs that reference external sprites via <use>
+        if (svg.querySelector('use')) return;
+        // Replace inline SVGs over threshold with placeholders
+        if (svg.outerHTML.length > SVG_INLINE_MAX) {
           const ph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
           for (const a of ['width', 'height', 'viewBox', 'class', 'aria-label', 'aria-hidden']) {
             if (svg.getAttribute(a)) ph.setAttribute(a, svg.getAttribute(a));
@@ -347,30 +350,18 @@
   // --- Framework detection --------------------------------------------------
   function detectFrameworks() {
     const fw = [];
-    // Vue
-    if (window.__VUE__ || window.__vue_app__ || document.querySelector('[data-v-]') ||
-        document.querySelector('[data-v-app]') || window.__VUE_DEVTOOLS_GLOBAL_HOOK__) fw.push('Vue');
-    // React
-    if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || window._reactRootContainer ||
-        document.querySelector('[data-reactroot]') || document.querySelector('[data-reactid]')) fw.push('React');
-    // Next.js
-    if (window.__NEXT_DATA__ || document.querySelector('#__next')) fw.push('Next.js');
-    // Nuxt
-    if (window.__NUXT__ || document.querySelector('#__nuxt')) fw.push('Nuxt');
-    // Angular
-    if (window.ng || document.querySelector('[ng-version]') ||
-        document.querySelector('[_nghost]') || document.querySelector('[_ngcontent]')) fw.push('Angular');
-    // Svelte
-    if (document.querySelector('[class*="svelte-"]')) fw.push('Svelte');
-    // jQuery
-    if (window.jQuery || window.$?.fn?.jquery) fw.push('jQuery');
-    // Tailwind (utility classes)
-    if (document.querySelector('[class*="tw-"]') ||
-        document.querySelector('style[data-tw]') ||
-        [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText && /^\.\!?-?(?:sm|md|lg|xl|2xl):/.test(r.selectorText)); } catch { return false; } })) fw.push('Tailwind');
-    // Bootstrap
-    if (document.querySelector('.container-fluid, .row .col-md-6, [class*="btn-primary"]') ||
-        [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText === '.container-fluid'); } catch { return false; } })) fw.push('Bootstrap');
+    const check = (cond, name) => { try { if (cond()) fw.push(name); } catch {} };
+    check(() => window.__VUE__ || window.__vue_app__ || window.__VUE_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-v-app]'), 'Vue');
+    check(() => window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-reactroot]') || document.querySelector('[data-reactid]'), 'React');
+    check(() => window.__NEXT_DATA__ || document.querySelector('#__next'), 'Next.js');
+    check(() => window.__NUXT__ || document.querySelector('#__nuxt'), 'Nuxt');
+    check(() => window.ng || document.querySelector('[ng-version]') || document.querySelector('[_nghost]') || document.querySelector('[_ngcontent]'), 'Angular');
+    check(() => document.querySelector('[class*="svelte-"]'), 'Svelte');
+    check(() => window.jQuery || window.$?.fn?.jquery, 'jQuery');
+    check(() => document.querySelector('[class*="tw-"]') || document.querySelector('style[data-tw]') ||
+      [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText && /^\.\!?-?(?:sm|md|lg|xl|2xl):/.test(r.selectorText)); } catch { return false; } }), 'Tailwind');
+    check(() => [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText && /^\.col-md-\d+$/.test(r.selectorText)); } catch { return false; } }) ||
+      (document.querySelector('.container-fluid') && document.querySelector('.row') && document.querySelector('[class^="col-"]')), 'Bootstrap');
     return fw.length ? fw : undefined;
   }
 
