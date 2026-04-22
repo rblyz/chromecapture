@@ -607,7 +607,11 @@
       return el;
     });
     if (rulePool.length) envelope.cssRules = rulePool;
-    out.value = '<chrome-capture' + fwAttr + '>' + JSON.stringify(envelope) + '</chrome-capture>';
+    var hint = '[This is a captured UI snippet from a real webpage. '
+      + 'Common tasks: replicate this design in code, analyze layout and styles, suggest improvements. '
+      + 'If the capture is large, focus on page structure first, then ask the user to capture specific sections for detail. '
+      + 'If the user hasn\\x27t specified a task, ask what they need.]\\n';
+    out.value = '<chrome-capture' + fwAttr + '>' + hint + JSON.stringify(envelope) + '</chrome-capture>';
 
     list.replaceChildren();
     captures.forEach((cap, i) => {
