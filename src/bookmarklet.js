@@ -209,6 +209,7 @@
     for (const sh of document.styleSheets) {
       try { sh.cssRules; continue; } catch {} // already accessible
       if (!sh.href) continue;
+      try { if (new URL(sh.href).origin !== location.origin) continue; } catch {}
       fetches.push(
         fetch(sh.href).then(r => r.text()).then(css => {
           const s = document.createElement('style');
@@ -507,19 +508,108 @@
       if (inactive.length) vp.inactiveMedia = inactive;
     }
     cap.viewport = vp;
+    cap._el = target;
     captures.push(cap);
     render();
   }
 
   // --- Render ---------------------------------------------------------------
+  function nearestLandmark(el) {
+    var tags = ['HEADER','NAV','MAIN','ASIDE','FOOTER','SECTION','ARTICLE'];
+    var n = el;
+    while (n && n !== document.body) {
+      if (tags.indexOf(n.tagName) !== -1) return n.tagName.toLowerCase();
+      n = n.parentElement;
+    }
+    return null;
+  }
+
+  function spatialRelation(ra, rb) {
+    // vertical: a ends before b starts (with 20px tolerance)
+    if (ra.y + ra.height <= rb.y + 20) return 'above';
+    if (rb.y + rb.height <= ra.y + 20) return 'below';
+    // horizontal: side by side
+    if (ra.x + ra.width <= rb.x + 20) return 'left-of';
+    if (rb.x + rb.width <= ra.x + 20) return 'right-of';
+    return 'overlaps';
+  }
+
+  function buildRelationships() {
+    if (captures.length < 2) return undefined;
+    var rels = [];
+    for (var i = 0; i < captures.length; i++) {
+      for (var j = i + 1; j < captures.length; j++) {
+        var rel = { elements: [i, j] };
+        try {
+          var a = captures[i]._el, b = captures[j]._el;
+          if (a && b && a.isConnected && b.isConnected) {
+            if (a.contains(b)) rel.dom = 'parent-child';
+            else if (b.contains(a)) rel.dom = 'child-parent';
+            else if (a.parentElement && a.parentElement === b.parentElement) rel.dom = 'siblings';
+          }
+        } catch (e) {}
+        rel.spatial = spatialRelation(captures[i].rect, captures[j].rect);
+        rels.push(rel);
+      }
+    }
+    return rels;
+  }
+
   function render() {
-    const json = JSON.stringify(captures);
-    const fw = detectFrameworks();
-    const fwAttr = fw ? ' frameworks="' + fw.join(',') + '"' : '';
-    out.value = captures.length ? '<chrome-capture' + fwAttr + '>' + json + '</chrome-capture>' : '';
+    var fw = detectFrameworks();
+    var fwAttr = fw ? ' frameworks="' + fw.join(',') + '"' : '';
+    if (!captures.length) { out.value = ''; list.replaceChildren(); list.appendChild(empty); return; }
+    // Per-element fields to hoist to the envelope
+    var hoisted = ['url', 'title', 'timestamp', 'viewport'];
+    // Merge viewport media queries from all elements
+    var mergedVp = { width: window.innerWidth, height: window.innerHeight, mode: window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop' };
+    var activeSet = new Set(), inactiveSet = new Set();
+    captures.forEach(function(cap) {
+      if (cap.viewport) {
+        (cap.viewport.activeMedia || []).forEach(function(m) { activeSet.add(m); });
+        (cap.viewport.inactiveMedia || []).forEach(function(m) { inactiveSet.add(m); });
+      }
+    });
+    if (activeSet.size) mergedVp.activeMedia = Array.from(activeSet);
+    if (inactiveSet.size) mergedVp.inactiveMedia = Array.from(inactiveSet);
+    // Build envelope
+    var envelope = {
+      url: location.href,
+      title: document.title,
+      timestamp: new Date().toISOString(),
+      viewport: mergedVp,
+    };
+    if (fw) envelope.frameworks = fw;
+    var rels = buildRelationships();
+    if (rels) envelope.relationships = rels;
+    // Deduplicate cssRules across elements into a shared pool
+    var rulePool = [];
+    var ruleIndex = {};
+    envelope.elements = captures.map(function(cap) {
+      var el = {};
+      var lm = cap._el && cap._el.isConnected ? nearestLandmark(cap._el) : null;
+      if (lm) el.landmark = lm;
+      for (var k in cap) {
+        if (k === '_el' || hoisted.indexOf(k) !== -1) continue;
+        el[k] = cap[k];
+      }
+      if (el.cssRules && el.cssRules.length) {
+        el.cssRuleRefs = el.cssRules.map(function(rule) {
+          var key = JSON.stringify(rule);
+          if (ruleIndex[key] === undefined) {
+            ruleIndex[key] = rulePool.length;
+            rulePool.push(rule);
+          }
+          return ruleIndex[key];
+        });
+        delete el.cssRules;
+      }
+      return el;
+    });
+    if (rulePool.length) envelope.cssRules = rulePool;
+    out.value = '<chrome-capture' + fwAttr + '>' + JSON.stringify(envelope) + '</chrome-capture>';
 
     list.replaceChildren();
-    if (!captures.length) { list.appendChild(empty); return; }
     captures.forEach((cap, i) => {
       const row = el('div',
         'display:flex;align-items:center;gap:8px;padding:6px 8px;' +
@@ -529,7 +619,7 @@
         'padding:1px 6px;background:' + C.accent + ';color:#fff;' +
         'border-radius:4px;font-size:9px;font-weight:600;font-family:ui-monospace,Menlo,monospace;',
         cap.tag);
-      const capJson = JSON.stringify(cap);
+      const capJson = JSON.stringify(cap, (k, v) => k === '_el' ? undefined : v);
       const words = capJson.split(/\s+/).length;
       const modeTag = el('span',
         'padding:1px 4px;border-radius:3px;font-size:8px;font-weight:500;' +
