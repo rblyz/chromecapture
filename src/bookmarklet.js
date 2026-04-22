@@ -288,9 +288,6 @@
     if (txt) return txt.length > 40 ? txt.slice(0, 40) + '\u2026' : txt;
     return selApprox(target);
   }
-  function uid() {
-    return 'cap_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-  }
   // Clean outerHTML: remove elements that don't affect visual design
   const TRACKER_RE = /^data-(ad|google|adsbygoogle|load-complete|gtm|fb[-p]?|analytics|track|event|segment|amplitude|amp|mp|mixpanel|hj|hotjar|heap|intercom|pendo|clarity|ga4?)(-|$)/;
   function cleanHTML(el) {
@@ -308,7 +305,39 @@
         }
       }
     });
-    return clone.outerHTML;
+    // Strip HTML comments (Vue <!--v-if-->, React, Angular remnants)
+    const html = clone.outerHTML.replace(/<!--[\s\S]*?-->/g, '');
+    return html;
+  }
+
+  // --- Framework detection --------------------------------------------------
+  function detectFrameworks() {
+    const fw = [];
+    // Vue
+    if (window.__VUE__ || window.__vue_app__ || document.querySelector('[data-v-]') ||
+        document.querySelector('[data-v-app]') || window.__VUE_DEVTOOLS_GLOBAL_HOOK__) fw.push('Vue');
+    // React
+    if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || window._reactRootContainer ||
+        document.querySelector('[data-reactroot]') || document.querySelector('[data-reactid]')) fw.push('React');
+    // Next.js
+    if (window.__NEXT_DATA__ || document.querySelector('#__next')) fw.push('Next.js');
+    // Nuxt
+    if (window.__NUXT__ || document.querySelector('#__nuxt')) fw.push('Nuxt');
+    // Angular
+    if (window.ng || document.querySelector('[ng-version]') ||
+        document.querySelector('[_nghost]') || document.querySelector('[_ngcontent]')) fw.push('Angular');
+    // Svelte
+    if (document.querySelector('[class*="svelte-"]')) fw.push('Svelte');
+    // jQuery
+    if (window.jQuery || window.$?.fn?.jquery) fw.push('jQuery');
+    // Tailwind (utility classes)
+    if (document.querySelector('[class*="tw-"]') ||
+        document.querySelector('style[data-tw]') ||
+        [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText && /^\.\!?-?(?:sm|md|lg|xl|2xl):/.test(r.selectorText)); } catch { return false; } })) fw.push('Tailwind');
+    // Bootstrap
+    if (document.querySelector('.container-fluid, .row .col-md-6, [class*="btn-primary"]') ||
+        [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText === '.container-fluid'); } catch { return false; } })) fw.push('Bootstrap');
+    return fw.length ? fw : undefined;
   }
 
   // --- Accessibility & semantics --------------------------------------------
@@ -379,9 +408,8 @@
     const r = target.getBoundingClientRect();
     const semantics = getSemantics(target);
     const cap = {
-      id: uid(),
       selector: selApprox(target),
-      label: mkLabel(target),
+      _label: mkLabel(target),
       tag: target.tagName.toLowerCase(),
       url: location.href,
       title: document.title,
@@ -402,8 +430,10 @@
 
   // --- Render ---------------------------------------------------------------
   function render() {
-    const json = JSON.stringify(captures);
-    out.value = captures.length ? '<chrome-capture>' + json + '</chrome-capture>' : '';
+    const json = JSON.stringify(captures, (k, v) => k === '_label' ? undefined : v);
+    const fw = detectFrameworks();
+    const fwTag = fw ? ' frameworks="' + fw.join(',') + '"' : '';
+    out.value = captures.length ? '<chrome-capture' + fwTag + '>' + json + '</chrome-capture>' : '';
 
     list.replaceChildren();
     if (!captures.length) { list.appendChild(empty); return; }
@@ -418,7 +448,7 @@
         cap.tag);
       const name = el('span',
         'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;' +
-        'white-space:nowrap;color:' + C.txPri + ';', cap.label);
+        'white-space:nowrap;color:' + C.txPri + ';', cap._label);
       const dim = el('span',
         'font-size:10px;color:' + C.txTer + ';font-family:ui-monospace,Menlo,monospace;',
         cap.rect.width + '\u00d7' + cap.rect.height);
