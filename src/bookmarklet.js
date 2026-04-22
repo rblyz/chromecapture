@@ -288,6 +288,39 @@
     }
     return m;
   }
+  // Pseudo-elements ::before/::after
+  const PSEUDO_PROPS = ['content','display','position','top','right','bottom','left',
+    'width','height','background','color','font-size','font-family','border','border-radius'];
+  function getPseudos(target) {
+    const result = {};
+    for (const pseudo of ['::before', '::after']) {
+      const cs = getComputedStyle(target, pseudo);
+      const content = cs.getPropertyValue('content');
+      if (!content || content === 'none' || content === 'normal') continue;
+      const styles = { content };
+      for (const p of PSEUDO_PROPS) {
+        if (p === 'content') continue;
+        const v = cs.getPropertyValue(p);
+        if (v && !SKIP.has(v) && !(DEFAULTS[p] === v)) styles[p] = v;
+      }
+      result[pseudo] = styles;
+    }
+    return Object.keys(result).length ? result : undefined;
+  }
+  // Fonts used by element
+  function getUsedFonts(target) {
+    if (!document.fonts || !document.fonts.forEach) return undefined;
+    const cs = getComputedStyle(target);
+    const families = cs.fontFamily.split(',').map(f => f.trim().replace(/^[\x22\x27]|[\x22\x27]$/g, ''));
+    const loaded = [];
+    document.fonts.forEach(f => {
+      if (f.status === 'loaded' && families.some(fam => fam.toLowerCase() === f.family.toLowerCase())) {
+        const entry = f.family;
+        if (!loaded.includes(entry)) loaded.push(entry);
+      }
+    });
+    return loaded.length ? loaded : undefined;
+  }
 
   // --- Capture --------------------------------------------------------------
   function selApprox(target) {
@@ -304,7 +337,8 @@
     // Remove non-visual elements + our own panel
     clone.querySelectorAll(
       'script, iframe, noscript, ins.adsbygoogle, [data-ad-client], ' +
-      '[data-google-container-id], style:not([data-chromecap])'
+      '[data-google-container-id], [data-sender], .resize-sensor, ' +
+      'style:not([data-chromecap])'
     ).forEach(n => n.remove());
     // Remove our own Chrome Capture panel if it got captured
     clone.querySelectorAll('[style*="z-index: 2147483647"], [style*="z-index:2147483647"], [style*="z-index: 2147483646"], [style*="z-index:2147483646"]').forEach(n => n.remove());
@@ -322,12 +356,15 @@
         }
       }
     });
+    // Grab innerText: insert clone offscreen so browser computes spacing correctly
+    clone.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none;';
+    document.body.appendChild(clone);
+    const cleanText = clone.innerText || '';
+    clone.remove();
     // Structure mode: simplify SVGs and strip text nodes
     if (captureMode === 'structure') {
       clone.querySelectorAll('svg').forEach(svg => {
-        // Keep SVGs that reference external sprites via <use>
         if (svg.querySelector('use')) return;
-        // Replace inline SVGs over threshold with placeholders
         if (svg.outerHTML.length > SVG_INLINE_MAX) {
           const ph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
           for (const a of ['width', 'height', 'viewBox', 'class', 'aria-label', 'aria-hidden']) {
@@ -344,7 +381,7 @@
     }
     // Strip HTML comments
     const html = clone.outerHTML.replace(/<!--[\s\S]*?-->/g, '');
-    return html;
+    return { html, innerText: cleanText };
   }
 
   // --- Framework detection --------------------------------------------------
@@ -431,6 +468,7 @@
   async function capture(target) {
     await fixCorsSheets();
     const r = target.getBoundingClientRect();
+    const cleaned = cleanHTML(target);
     const semantics = getSemantics(target);
     const cap = {
       mode: captureMode,
@@ -439,8 +477,8 @@
       url: location.href,
       title: document.title,
       timestamp: new Date().toISOString(),
-      innerText: target.innerText || '',
-      outerHTML: cleanHTML(target),
+      innerText: cleaned.innerText,
+      outerHTML: cleaned.html,
       rect: {
         x: Math.round(r.x), y: Math.round(r.y),
         width: Math.round(r.width), height: Math.round(r.height),
@@ -449,6 +487,10 @@
       cssRules: getRules(target),
     };
     if (semantics) cap.semantics = semantics;
+    const pseudos = getPseudos(target);
+    if (pseudos) cap.pseudoElements = pseudos;
+    const fonts = getUsedFonts(target);
+    if (fonts) cap.loadedFonts = fonts;
     captures.push(cap);
     render();
   }
