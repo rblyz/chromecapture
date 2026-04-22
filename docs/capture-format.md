@@ -3,27 +3,32 @@
 Chrome Capture outputs a JSON array wrapped in `<chrome-capture>` tags:
 
 ```
-<chrome-capture>[...elements...]</chrome-capture>
+<chrome-capture frameworks="React, Tailwind">[...elements...]</chrome-capture>
 ```
+
+The `frameworks` attribute lists auto-detected frameworks on the page (Vue, React, Next.js, Nuxt, Angular, Svelte, jQuery, Tailwind, Bootstrap). Omitted if none detected.
 
 ## Element Schema
 
 Each captured element is a JSON object:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `string` | Unique ID (`cap_<timestamp>_<random>`) |
-| `selector` | `string` | Approximate CSS selector (`tag#id`, `tag.class`, or `tag`) |
-| `label` | `string` | Human-readable label (first 40 chars of inner text, or selector) |
-| `tag` | `string` | HTML tag name (lowercase) |
-| `url` | `string` | Page URL where element was captured |
-| `title` | `string` | Page title |
-| `timestamp` | `string` | ISO 8601 timestamp |
-| `innerText` | `string` | Text content of the element |
-| `outerHTML` | `string` | Full HTML including children |
-| `rect` | `object` | Bounding box `{ x, y, width, height }` in px |
-| `computedStyles` | `object` | Key-value map of non-default computed CSS properties |
-| `cssRules` | `array` | Matching CSS rules from stylesheets |
+| Field | Type | Always present | Description |
+|-------|------|:-:|-------------|
+| `mode` | `string` | yes | `"all"` (full content) or `"structure"` (skeleton, no text) |
+| `selector` | `string` | yes | Approximate CSS selector (`tag#id`, `tag.class`, or `tag`) |
+| `tag` | `string` | yes | HTML tag name (lowercase) |
+| `url` | `string` | yes | Page URL where element was captured |
+| `title` | `string` | yes | Page title |
+| `timestamp` | `string` | yes | ISO 8601 timestamp |
+| `innerText` | `string` | yes | Text content of the element |
+| `outerHTML` | `string` | yes | Sanitized HTML including children |
+| `rect` | `object` | yes | Bounding box `{ x, y, width, height }` in px |
+| `computedStyles` | `object` | yes | Key-value map of non-default computed CSS properties |
+| `cssRules` | `array` | yes | Matching CSS rules from stylesheets |
+| `viewport` | `object` | yes | Viewport context (see below) |
+| `semantics` | `object` | no | Accessibility data (see below) |
+| `pseudoElements` | `object` | no | Computed styles for `::before` / `::after` |
+| `loadedFonts` | `array` | no | Font families used by the element that are loaded on the page |
 
 ### `computedStyles`
 
@@ -37,13 +42,75 @@ Each entry:
 
 ```json
 {
-  "selector": ".btn-primary",
-  "css": "background: #D97757; color: #fff; ...",
-  "media": "@media (min-width: 768px)"  // optional
+  "selector": ".btn:hover",
+  "css": "background: var(--color-primary); color: #fff",
+  "cssResolved": "background: #D97757; color: #fff",
+  "media": "@media (min-width: 768px)",
+  "states": ["hover"]
 }
 ```
 
-Rules are collected from all accessible stylesheets (CORS-restricted sheets are skipped). Media queries and `@supports` conditions are preserved.
+| Field | Always present | Description |
+|-------|:-:|-------------|
+| `selector` | yes | CSS selector text |
+| `css` | yes | Rule body as written in the stylesheet |
+| `cssResolved` | no | Same as `css` but with `var(--*)` resolved to computed values. Only present when `css` contains CSS variables |
+| `media` | no | `@media` or `@supports` condition |
+| `states` | no | Pseudo-class states this rule applies to (e.g. `["hover", "focus"]`). Present when the rule targets a state the element isn't currently in |
+
+Rules are collected from all accessible stylesheets. Cross-origin stylesheets are fetched via `fetch()` and injected as `<style>` to bypass CSSOM CORS restrictions. Rules are deduplicated and junk-filtered (universal selectors, Tailwind resets, `prefers-reduced-motion`).
+
+### `viewport`
+
+```json
+{
+  "width": 1440,
+  "height": 900,
+  "mode": "desktop",
+  "activeMedia": ["@media (min-width: 768px)"],
+  "inactiveMedia": ["@media (max-width: 767px)"]
+}
+```
+
+| Field | Always present | Description |
+|-------|:-:|-------------|
+| `width`, `height` | yes | `window.innerWidth` / `innerHeight` in px |
+| `mode` | yes | `"mobile"` (<768), `"tablet"` (768-1023), or `"desktop"` (1024+) |
+| `activeMedia` | no | Media queries from this element's CSS rules that currently match |
+| `inactiveMedia` | no | Media queries that don't currently match |
+
+### `semantics`
+
+Present only when accessibility-relevant data exists on the element.
+
+| Field | Description |
+|-------|-------------|
+| `role` | Explicit ARIA role |
+| `accessibleName` | Computed accessible name |
+| `disabled`, `checked`, `required`, `readOnly` | Interactive states (only when true) |
+| `ariaHidden` | `true` when `aria-hidden="true"` |
+| `ariaExpanded` | Boolean, from `aria-expanded` |
+| `ariaPressed` | Value of `aria-pressed` |
+| `formAction`, `formMethod` | From closest `<form>` or element's own `formAction` |
+| `formFields` | Array of form field descriptors (up to 20): `{ tag, type, name, label }` |
+
+### `pseudoElements`
+
+Present only when `::before` or `::after` have non-empty `content`.
+
+```json
+{
+  "::before": {
+    "content": "\"→\"",
+    "color": "rgb(0, 0, 0)",
+    "font-size": "16px"
+  }
+}
+```
+
+### `loadedFonts`
+
+Array of font family names that are both declared in the element's `font-family` and loaded via the Font Loading API. Example: `["Inter", "Roboto"]`.
 
 ## Why This Format?
 
