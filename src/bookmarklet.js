@@ -361,6 +361,7 @@
     document.body.appendChild(clone);
     const cleanText = clone.innerText || '';
     clone.remove();
+    clone.style.cssText = '';
     // Structure mode: simplify SVGs and strip text nodes
     if (captureMode === 'structure') {
       clone.querySelectorAll('svg').forEach(svg => {
@@ -491,6 +492,21 @@
     if (pseudos) cap.pseudoElements = pseudos;
     const fonts = getUsedFonts(target);
     if (fonts) cap.loadedFonts = fonts;
+    // Viewport & media query context
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const vp = { width: vw, height: vh, mode: vw < 768 ? 'mobile' : vw < 1024 ? 'tablet' : 'desktop' };
+    // Collect unique media queries from this element's cssRules and classify
+    const mediaSet = new Set();
+    (cap.cssRules || []).forEach(r => { if (r.media) mediaSet.add(r.media); });
+    if (mediaSet.size) {
+      const active = [], inactive = [];
+      mediaSet.forEach(mq => {
+        try { (window.matchMedia(mq).matches ? active : inactive).push(mq); } catch {}
+      });
+      if (active.length) vp.activeMedia = active;
+      if (inactive.length) vp.inactiveMedia = inactive;
+    }
+    cap.viewport = vp;
     captures.push(cap);
     render();
   }
