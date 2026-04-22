@@ -12,11 +12,12 @@ Capture web elements with their computed styles, CSS rules, and semantics — fo
 
 ## Install
 
-```bash
-npm run build
-```
+1. Open [`dist/bookmarklet.txt`](dist/bookmarklet.txt) and copy its entire contents (starts with `javascript:`)
+2. In Chrome, right-click the bookmarks bar → **Add page...**
+3. Set any name (e.g. "Capture") and paste the copied text as the **URL**
+4. Click Save — done
 
-Copy `dist/bookmarklet.txt` → create a new bookmark in Chrome → paste as URL.
+> To rebuild from source after changes: `npm run build`
 
 ## Usage
 
