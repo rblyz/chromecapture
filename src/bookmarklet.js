@@ -24,6 +24,7 @@
   const captures = [];
   let picking = false;
   let hoverEl = null;
+  let captureMode = 'all'; // 'all' | 'structure'
 
   const el = (tag, css, txt) => {
     const e = document.createElement(tag);
@@ -66,7 +67,19 @@
     'color:' + C.txTer + ';cursor:pointer;font:14px/1 ' + FONT + ';padding:0;', '\u2715');
   closeBtn.onmouseenter = () => closeBtn.style.background = C.bgHover;
   closeBtn.onmouseleave = () => closeBtn.style.background = 'transparent';
-  header.append(dot, title, closeBtn);
+  const modeBtn = el('button',
+    'padding:2px 8px;border:1px solid ' + C.bdDef + ';border-radius:5px;' +
+    'background:' + C.bgPanel + ';color:' + C.txSec + ';cursor:pointer;' +
+    'font:10px/1.4 ' + FONT + ';white-space:nowrap;');
+  modeBtn.textContent = 'all';
+  modeBtn.title = 'Toggle capture mode: all / structure (no text, simplified SVG)';
+  modeBtn.onclick = () => {
+    captureMode = captureMode === 'all' ? 'structure' : 'all';
+    modeBtn.textContent = captureMode;
+    modeBtn.style.background = captureMode === 'structure' ? C.accent : C.bgPanel;
+    modeBtn.style.color = captureMode === 'structure' ? '#fff' : C.txSec;
+  };
+  header.append(dot, title, modeBtn, closeBtn);
 
   // Body
   const body = el('div', 'padding:14px;display:flex;flex-direction:column;gap:12px;');
@@ -283,29 +296,50 @@
     const cls = (target.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean)[0];
     return cls ? tag + '.' + cls : tag;
   }
-  function mkLabel(target) {
-    const txt = (target.innerText || '').trim().replace(/\s+/g, ' ');
-    if (txt) return txt.length > 40 ? txt.slice(0, 40) + '\u2026' : txt;
-    return selApprox(target);
-  }
   // Clean outerHTML: remove elements that don't affect visual design
   const TRACKER_RE = /^data-(ad|google|adsbygoogle|load-complete|gtm|fb[-p]?|analytics|track|event|segment|amplitude|amp|mp|mixpanel|hj|hotjar|heap|intercom|pendo|clarity|ga4?)(-|$)/;
+  const SVG_MAX = 200;
   function cleanHTML(el) {
     const clone = el.cloneNode(true);
-    // Remove non-visual elements
+    // Remove non-visual elements + our own panel
     clone.querySelectorAll(
       'script, iframe, noscript, ins.adsbygoogle, [data-ad-client], ' +
       '[data-google-container-id], style:not([data-chromecap])'
     ).forEach(n => n.remove());
-    // Strip all inline event handlers and tracker data-attributes
+    // Remove our own Chrome Capture panel if it got captured
+    clone.querySelectorAll('[style*="z-index: 2147483647"], [style*="z-index:2147483647"], [style*="z-index: 2147483646"], [style*="z-index:2147483646"]').forEach(n => n.remove());
+    // Strip framework island serialized data (Astro, Nuxt, etc.)
+    clone.querySelectorAll('astro-island[props], [data-island-props]').forEach(n => {
+      n.removeAttribute('props');
+      n.removeAttribute('data-island-props');
+    });
+    // Strip inline event handlers, tracker attrs, and framework internals
+    const FW_RE = /^(data-astro-cid|data-astro-source|data-v-|data-hk|data-svelte|data-sveltekit|data-reactid|data-reactroot|data-server-rendered|data-fetch-key|data-hydrate|data-ssr|data-lit|data-nscript|_ng|ng-reflect)/;
     clone.querySelectorAll('*').forEach(n => {
       for (const attr of [...n.attributes]) {
-        if (attr.name.startsWith('on') || TRACKER_RE.test(attr.name)) {
+        if (attr.name.startsWith('on') || TRACKER_RE.test(attr.name) || FW_RE.test(attr.name)) {
           n.removeAttribute(attr.name);
         }
       }
     });
-    // Strip HTML comments (Vue <!--v-if-->, React, Angular remnants)
+    // Structure mode: simplify SVGs and strip text nodes
+    if (captureMode === 'structure') {
+      clone.querySelectorAll('svg').forEach(svg => {
+        if (svg.outerHTML.length > SVG_MAX) {
+          const ph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          for (const a of ['width', 'height', 'viewBox', 'class', 'aria-label', 'aria-hidden']) {
+            if (svg.getAttribute(a)) ph.setAttribute(a, svg.getAttribute(a));
+          }
+          ph.setAttribute('data-placeholder', 'svg');
+          svg.replaceWith(ph);
+        }
+      });
+      const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode);
+      textNodes.forEach(n => n.remove());
+    }
+    // Strip HTML comments
     const html = clone.outerHTML.replace(/<!--[\s\S]*?-->/g, '');
     return html;
   }
@@ -408,8 +442,8 @@
     const r = target.getBoundingClientRect();
     const semantics = getSemantics(target);
     const cap = {
+      mode: captureMode,
       selector: selApprox(target),
-      _label: mkLabel(target),
       tag: target.tagName.toLowerCase(),
       url: location.href,
       title: document.title,
@@ -430,10 +464,10 @@
 
   // --- Render ---------------------------------------------------------------
   function render() {
-    const json = JSON.stringify(captures, (k, v) => k === '_label' ? undefined : v);
+    const json = JSON.stringify(captures);
     const fw = detectFrameworks();
-    const fwTag = fw ? ' frameworks="' + fw.join(',') + '"' : '';
-    out.value = captures.length ? '<chrome-capture' + fwTag + '>' + json + '</chrome-capture>' : '';
+    const fwAttr = fw ? ' frameworks="' + fw.join(',') + '"' : '';
+    out.value = captures.length ? '<chrome-capture' + fwAttr + '>' + json + '</chrome-capture>' : '';
 
     list.replaceChildren();
     if (!captures.length) { list.appendChild(empty); return; }
@@ -446,11 +480,19 @@
         'padding:1px 6px;background:' + C.accent + ';color:#fff;' +
         'border-radius:4px;font-size:9px;font-weight:600;font-family:ui-monospace,Menlo,monospace;',
         cap.tag);
-      const name = el('span',
-        'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;' +
-        'white-space:nowrap;color:' + C.txPri + ';', cap._label);
+      const capJson = JSON.stringify(cap);
+      const words = capJson.split(/\s+/).length;
+      const modeTag = el('span',
+        'padding:1px 4px;border-radius:3px;font-size:8px;font-weight:500;' +
+        'font-family:ui-monospace,Menlo,monospace;' +
+        'background:' + (cap.mode === 'structure' ? C.accent : C.bgMuted) + ';' +
+        'color:' + (cap.mode === 'structure' ? '#fff' : C.txTer) + ';',
+        cap.mode === 'structure' ? 'str' : 'all');
+      const size = el('span',
+        'flex:1;font-size:10px;color:' + C.txTer + ';font-family:ui-monospace,Menlo,monospace;white-space:nowrap;',
+        words > 999 ? (words / 1000).toFixed(1) + 'k w' : words + ' w');
       const dim = el('span',
-        'font-size:10px;color:' + C.txTer + ';font-family:ui-monospace,Menlo,monospace;',
+        'font-size:10px;color:' + C.txTer + ';font-family:ui-monospace,Menlo,monospace;white-space:nowrap;',
         cap.rect.width + '\u00d7' + cap.rect.height);
       const x = el('button',
         'width:18px;height:18px;border:0;border-radius:4px;background:transparent;' +
@@ -459,7 +501,7 @@
       x.onmouseenter = () => { x.style.background = C.bgHover; x.style.color = C.txPri; };
       x.onmouseleave = () => { x.style.background = 'transparent'; x.style.color = C.txTer; };
       x.onclick = () => { captures.splice(i, 1); render(); };
-      row.append(chip, name, dim, x);
+      row.append(chip, modeTag, size, dim, x);
       list.appendChild(row);
     });
   }
