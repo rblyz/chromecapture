@@ -199,8 +199,8 @@
     if (media && /prefers-reduced-motion/.test(media)) return true;
     return false;
   }
-  // Fetch cross-origin stylesheets and parse them into a temporary sheet
-  // so we can read their rules via the CSSOM.
+  // Re-fetch same-origin stylesheets that throw SecurityError on .cssRules
+  // (e.g. file:// or sandboxed contexts) and inject as inline <style>.
   let _corsFixed = false;
   async function fixCorsSheets() {
     if (_corsFixed) return;
@@ -323,6 +323,18 @@
     return loaded.length ? loaded : undefined;
   }
 
+  // --- Helpers ---------------------------------------------------------------
+  function mkViewport() {
+    const w = window.innerWidth, h = window.innerHeight;
+    return { width: w, height: h, mode: w < 768 ? 'mobile' : w < 1024 ? 'tablet' : 'desktop' };
+  }
+  function mkRect(r) {
+    return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+  }
+  function mkRelRect(r, origin) {
+    return { x: Math.round(r.left - origin.left), y: Math.round(r.top - origin.top), width: Math.round(r.width), height: Math.round(r.height) };
+  }
+
   // --- Capture --------------------------------------------------------------
   function selApprox(target) {
     const tag = target.tagName.toLowerCase();
@@ -387,7 +399,9 @@
   }
 
   // --- Framework detection --------------------------------------------------
+  let _fwCache;
   function detectFrameworks() {
+    if (_fwCache !== undefined) return _fwCache;
     const fw = [];
     const check = (cond, name) => { try { if (cond()) fw.push(name); } catch {} };
     check(() => window.__VUE__ || window.__vue_app__ || window.__VUE_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-v-app]'), 'Vue');
@@ -401,7 +415,8 @@
       [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText && /^\.\!?-?(?:sm|md|lg|xl|2xl):/.test(r.selectorText)); } catch { return false; } }), 'Tailwind');
     check(() => [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText && /^\.col-md-\d+$/.test(r.selectorText)); } catch { return false; } }) ||
       (document.querySelector('.container-fluid') && document.querySelector('.row') && document.querySelector('[class^="col-"]')), 'Bootstrap');
-    return fw.length ? fw : undefined;
+    _fwCache = fw.length ? fw : null;
+    return _fwCache;
   }
 
   // --- Accessibility & semantics --------------------------------------------
@@ -468,10 +483,10 @@
   }
 
   // --- Layout mode -----------------------------------------------------------
-  var LAYOUT_MAX_DEPTH = 8;
-  var LAYOUT_MAX_NODES = 500;
-  var LAYOUT_MIN_SIZE = 20;
-  var LAYOUT_INLINE = new Set(['SPAN','A','EM','STRONG','B','I','U','S','SUB','SUP','SMALL','ABBR','CODE','MARK','Q','CITE','DFN','KBD','SAMP','VAR','TIME','BDO','BDI','WBR','LABEL']);
+  const LAYOUT_MAX_DEPTH = 8;
+  const LAYOUT_MAX_NODES = 500;
+  const LAYOUT_MIN_SIZE = 20;
+  const LAYOUT_INLINE = new Set(['SPAN','A','EM','STRONG','B','I','U','S','SUB','SUP','SMALL','ABBR','CODE','MARK','Q','CITE','DFN','KBD','SAMP','VAR','TIME','BDO','BDI','WBR','LABEL']);
 
   function layoutName(el) {
     var role = el.getAttribute('role');
@@ -504,12 +519,7 @@
         return {
           tag: 'svg',
           name: el.getAttribute('aria-label') || 'icon',
-          rect: {
-            x: Math.round(r.left - rootRect.left),
-            y: Math.round(r.top - rootRect.top),
-            width: Math.round(r.width),
-            height: Math.round(r.height),
-          },
+          rect: mkRelRect(r, rootRect),
         };
       }
 
@@ -517,15 +527,16 @@
       // and only walk the first of each run to save node budget
       var rawKids = el.children;
       var children = [];
-      var childSig = function(c) {
-        var cr = c.getBoundingClientRect();
-        return c.tagName + '|' + (c.getAttribute('class') || '').trim().split(/\s+/)[0] + '|' + Math.round(cr.width) + 'x' + Math.round(cr.height);
-      };
+      var sigs = [];
+      for (var si = 0; si < rawKids.length; si++) {
+        var cr = rawKids[si].getBoundingClientRect();
+        sigs[si] = rawKids[si].tagName + '|' + (rawKids[si].getAttribute('class') || '').trim().split(/\s+/)[0] + '|' + Math.round(cr.width) + 'x' + Math.round(cr.height);
+      }
       var ci = 0;
       while (ci < rawKids.length) {
-        var csig = childSig(rawKids[ci]);
+        var csig = sigs[ci];
         var crun = 1;
-        while (ci + crun < rawKids.length && childSig(rawKids[ci + crun]) === csig) crun++;
+        while (ci + crun < rawKids.length && sigs[ci + crun] === csig) crun++;
         if (crun >= 3) {
           // Walk only the first, mark with repeat count
           var first = walk(rawKids[ci], depth + 1);
@@ -554,12 +565,7 @@
       var node = {
         tag: el.tagName.toLowerCase(),
         name: layoutName(el),
-        rect: {
-          x: Math.round(r.left - rootRect.left),
-          y: Math.round(r.top - rootRect.top),
-          width: Math.round(r.width),
-          height: Math.round(r.height),
-        },
+        rect: mkRelRect(r, rootRect),
       };
       if (children.length) node.children = children;
       return node;
@@ -575,12 +581,11 @@
       if (!tree) return;
       var rootR = target.getBoundingClientRect();
       var layoutCap = {
-        _layout: true,
         _el: target,
         mode: 'layout',
         selector: selApprox(target),
         tag: target.tagName.toLowerCase(),
-        rect: { x: Math.round(rootR.x), y: Math.round(rootR.y), width: Math.round(rootR.width), height: Math.round(rootR.height) },
+        rect: mkRect(rootR),
         tree: tree,
       };
       captures.push(layoutCap);
@@ -601,10 +606,7 @@
       timestamp: new Date().toISOString(),
       innerText: cleaned.innerText,
       outerHTML: cleaned.html,
-      rect: {
-        x: Math.round(r.x), y: Math.round(r.y),
-        width: Math.round(r.width), height: Math.round(r.height),
-      },
+      rect: mkRect(r),
       computedStyles: getComputed(target),
       cssRules: getRules(target),
     };
@@ -614,8 +616,7 @@
     const fonts = getUsedFonts(target);
     if (fonts) cap.loadedFonts = fonts;
     // Viewport & media query context
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const vp = { width: vw, height: vh, mode: vw < 768 ? 'mobile' : vw < 1024 ? 'tablet' : 'desktop' };
+    const vp = mkViewport();
     // Collect unique media queries from this element's cssRules and classify
     const mediaSet = new Set();
     (cap.cssRules || []).forEach(r => { if (r.media) mediaSet.add(r.media); });
@@ -629,6 +630,7 @@
     }
     cap.viewport = vp;
     cap._el = target;
+    cap._words = JSON.stringify(cap, (k, v) => k === '_el' ? undefined : v).split(/\s+/).length;
     captures.push(cap);
     render();
   }
@@ -689,13 +691,13 @@
     var parts = [];
 
     // Layout captures → separate <chrome-capture mode="layout">
-    var layoutCaps = captures.filter(function(c) { return c._layout; });
+    var layoutCaps = captures.filter(function(c) { return c.mode === 'layout'; });
     if (layoutCaps.length) {
       var layoutEnvelope = {
         url: location.href,
         title: document.title,
         timestamp: new Date().toISOString(),
-        viewport: { width: window.innerWidth, height: window.innerHeight, mode: window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop' },
+        viewport: mkViewport(),
       };
       if (fw) layoutEnvelope.frameworks = fw;
       layoutEnvelope.layouts = layoutCaps.map(function(cap) {
@@ -708,10 +710,10 @@
     }
 
     // Normal captures (all/structure) → separate <chrome-capture>
-    var normalCaps = captures.filter(function(c) { return !c._layout; });
+    var normalCaps = captures.filter(function(c) { return c.mode !== 'layout'; });
     if (normalCaps.length) {
     var hoisted = ['url', 'title', 'timestamp', 'viewport'];
-    var mergedVp = { width: window.innerWidth, height: window.innerHeight, mode: window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop' };
+    var mergedVp = mkViewport();
     var activeSet = new Set(), inactiveSet = new Set();
     normalCaps.forEach(function(cap) {
       if (cap.viewport) {
@@ -733,15 +735,15 @@
     var rulePool = [];
     var ruleIndex = {};
     envelope.elements = normalCaps.map(function(cap) {
-      var el = {};
+      var entry = {};
       var lm = cap._el && cap._el.isConnected ? nearestLandmark(cap._el) : null;
-      if (lm) el.landmark = lm;
+      if (lm) entry.landmark = lm;
       for (var k in cap) {
-        if (k === '_el' || hoisted.indexOf(k) !== -1) continue;
-        el[k] = cap[k];
+        if (k === '_el' || k === '_words' || hoisted.indexOf(k) !== -1) continue;
+        entry[k] = cap[k];
       }
-      if (el.cssRules && el.cssRules.length) {
-        el.cssRuleRefs = el.cssRules.map(function(rule) {
+      if (entry.cssRules && entry.cssRules.length) {
+        entry.cssRuleRefs = entry.cssRules.map(function(rule) {
           var key = JSON.stringify(rule);
           if (ruleIndex[key] === undefined) {
             ruleIndex[key] = rulePool.length;
@@ -749,9 +751,9 @@
           }
           return ruleIndex[key];
         });
-        delete el.cssRules;
+        delete entry.cssRules;
       }
-      return el;
+      return entry;
     });
     if (rulePool.length) envelope.cssRules = rulePool;
     var hint = '[This is a captured UI snippet from a real webpage. '
@@ -773,8 +775,7 @@
         'padding:1px 6px;background:' + C.accent + ';color:#fff;' +
         'border-radius:4px;font-size:9px;font-weight:600;font-family:ui-monospace,Menlo,monospace;',
         cap.tag);
-      const capJson = JSON.stringify(cap, (k, v) => k === '_el' ? undefined : v);
-      const words = capJson.split(/\s+/).length;
+      var words = cap._words || 0;
       var modeBg = cap.mode === 'all' ? C.bgMuted : C.accent;
       var modeFg = cap.mode === 'all' ? C.txTer : '#fff';
       var modeLabel = cap.mode === 'layout' ? 'lay' : cap.mode === 'structure' ? 'str' : 'all';
@@ -784,7 +785,7 @@
         'background:' + modeBg + ';' +
         'color:' + modeFg + ';',
         modeLabel);
-      var sizeText = cap._layout
+      var sizeText = cap.mode === 'layout'
         ? countNodes(cap.tree) + ' nodes'
         : words > 999 ? (words / 1000).toFixed(1) + 'k w' : words + ' w';
       const size = el('span',
