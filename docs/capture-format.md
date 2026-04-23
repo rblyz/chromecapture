@@ -1,51 +1,104 @@
 # Capture Format Specification
 
-Chrome Capture outputs a JSON array wrapped in `<chrome-capture>` tags:
+Chrome Capture outputs JSON wrapped in `<chrome-capture>` tags. The tag acts as a sentinel so LLMs can reliably detect captured data in a conversation.
+
+There are two output shapes depending on mode:
 
 ```
-<chrome-capture frameworks="React, Tailwind">[...elements...]</chrome-capture>
+<chrome-capture frameworks="React,Tailwind">{...envelope with elements[]...}</chrome-capture>
+<chrome-capture mode="layout" frameworks="Vue">{...envelope with layouts[]...}</chrome-capture>
 ```
 
-The `frameworks` attribute lists auto-detected frameworks on the page (Vue, React, Next.js, Nuxt, Angular, Svelte, jQuery, Tailwind, Bootstrap). Omitted if none detected.
+The `frameworks` attribute lists auto-detected frameworks (Vue, React, Next.js, Nuxt, Angular, Svelte, jQuery, Tailwind, Bootstrap). Omitted if none detected.
 
-## Element Schema
+Mixed captures (some elements in `all`/`structure`, some in `layout`) produce multiple `<chrome-capture>` tags concatenated.
 
-Each captured element is a JSON object:
+---
+
+## Envelope (all / structure modes)
+
+Page-level fields are hoisted to the envelope — not repeated per element.
+
+```json
+{
+  "url": "https://example.com/page",
+  "title": "Page Title",
+  "timestamp": "2026-04-23T14:15:43.468Z",
+  "viewport": { ... },
+  "relationships": [ ... ],
+  "elements": [ ... ],
+  "cssRules": [ ... ]
+}
+```
 
 | Field | Type | Always present | Description |
 |-------|------|:-:|-------------|
-| `mode` | `string` | yes | `"all"` (full content) or `"structure"` (skeleton, no text) |
+| `url` | `string` | yes | Page URL |
+| `title` | `string` | yes | Page title |
+| `timestamp` | `string` | yes | ISO 8601 capture time |
+| `viewport` | `object` | yes | Viewport context (see below) |
+| `relationships` | `array` | no | DOM and spatial relationships between captured elements (see below) |
+| `elements` | `array` | yes | Array of captured element objects |
+| `cssRules` | `array` | no | Deduplicated CSS rule pool (see below) |
+
+### CSS rule deduplication
+
+When multiple elements share the same CSS rules, rules are stored once in the top-level `cssRules[]` array. Each element references its rules by index:
+
+```json
+{
+  "elements": [
+    { "selector": "button.primary", "cssRuleRefs": [0, 1, 3], ... },
+    { "selector": "button.secondary", "cssRuleRefs": [0, 2, 3], ... }
+  ],
+  "cssRules": [
+    { "selector": ".btn", "css": "padding: 8px 16px" },
+    { "selector": ".btn.primary", "css": "background: #7C3AED" },
+    { "selector": ".btn.secondary", "css": "background: #E5E7EB" },
+    { "selector": ".btn:hover", "css": "opacity: 0.9", "states": ["hover"] }
+  ]
+}
+```
+
+If only one element is captured, `cssRuleRefs` may still be used. If no rules match, `cssRules` is omitted from the envelope entirely.
+
+---
+
+## Element Schema
+
+Each object in `elements[]`:
+
+| Field | Type | Always present | Description |
+|-------|------|:-:|-------------|
+| `mode` | `string` | yes | `"all"` or `"structure"` |
 | `selector` | `string` | yes | Approximate CSS selector (`tag#id`, `tag.class`, or `tag`) |
 | `tag` | `string` | yes | HTML tag name (lowercase) |
-| `url` | `string` | yes | Page URL where element was captured |
-| `title` | `string` | yes | Page title |
-| `timestamp` | `string` | yes | ISO 8601 timestamp |
-| `innerText` | `string` | yes | Text content of the element |
-| `outerHTML` | `string` | yes | Sanitized HTML including children |
-| `rect` | `object` | yes | Bounding box `{ x, y, width, height }` in px |
-| `computedStyles` | `object` | yes | Key-value map of non-default computed CSS properties |
-| `cssRules` | `array` | yes | Matching CSS rules from stylesheets |
-| `viewport` | `object` | yes | Viewport context (see below) |
-| `semantics` | `object` | no | Accessibility data (see below) |
+| `landmark` | `string` | no | Nearest landmark ancestor: `header`, `nav`, `main`, `aside`, `footer`, `section`, `article` |
+| `innerText` | `string` | yes | Text content. In `structure` mode this comes from the original element (before text node removal) |
+| `outerHTML` | `string` | yes | Sanitized HTML (see sanitization below) |
+| `rect` | `object` | yes | Bounding box `{ x, y, width, height }` in viewport px |
+| `computedStyles` | `object` | yes | Non-default computed CSS properties |
+| `cssRuleRefs` | `array` | no | Indices into the envelope's `cssRules[]` pool |
+| `semantics` | `object` | no | Accessibility and form data |
 | `pseudoElements` | `object` | no | Computed styles for `::before` / `::after` |
-| `loadedFonts` | `array` | no | Font families used by the element that are loaded on the page |
+| `loadedFonts` | `array` | no | Font families used by the element that are actually loaded on the page |
 
 ### `computedStyles`
 
-Only properties that differ from browser defaults are included. This keeps the output compact while preserving everything an LLM needs to reproduce the visual appearance.
+Only properties that differ from browser defaults. Keeps the output compact while preserving what matters for reproduction.
 
-Tracked properties: layout (`display`, `position`, `flex-*`, `grid-*`), sizing (`width`, `height`, `margin`, `padding`), visual (`background`, `color`, `border`, `border-radius`, `box-shadow`, `opacity`), typography (`font-*`, `line-height`, `letter-spacing`, `text-*`), and behavior (`overflow`, `z-index`, `transform`, `transition`, `cursor`).
+Tracked properties: layout (`display`, `position`, `flex-*`, `grid-*`), sizing (`width`, `height`, `margin`, `padding`), visual (`background`, `color`, `border`, `border-radius`, `box-shadow`, `opacity`), typography (`font-*`, `line-height`, `letter-spacing`, `text-*`), and behavior (`overflow`, `z-index`, `transform`, `transition`, `cursor`, `object-fit`).
 
-### `cssRules`
+### `cssRules[]` entries
 
-Each entry:
+Each rule in the pool:
 
 ```json
 {
   "selector": ".btn:hover",
   "css": "background: var(--color-primary); color: #fff",
   "cssResolved": "background: #D97757; color: #fff",
-  "media": "@media (min-width: 768px)",
+  "media": "(min-width: 768px)",
   "states": ["hover"]
 }
 ```
@@ -54,11 +107,11 @@ Each entry:
 |-------|:-:|-------------|
 | `selector` | yes | CSS selector text |
 | `css` | yes | Rule body as written in the stylesheet |
-| `cssResolved` | no | Same as `css` but with `var(--*)` resolved to computed values. Only present when `css` contains CSS variables |
-| `media` | no | `@media` or `@supports` condition |
-| `states` | no | Pseudo-class states this rule applies to (e.g. `["hover", "focus"]`). Present when the rule targets a state the element isn't currently in |
+| `cssResolved` | no | `css` with `var(--*)` resolved to computed values. Only when CSS variables are present |
+| `media` | no | `@media` or `@supports` condition string |
+| `states` | no | Pseudo-class states (`["hover", "focus"]`). Present when the rule targets a state the element isn't currently in |
 
-Rules are collected from all accessible stylesheets. Cross-origin stylesheets are fetched via `fetch()` and injected as `<style>` to bypass CSSOM CORS restrictions. Rules are deduplicated and junk-filtered (universal selectors, Tailwind resets, `prefers-reduced-motion`).
+Rules are collected from all accessible stylesheets. Same-origin stylesheets that throw `SecurityError` on `.cssRules` access are re-fetched via `fetch()` and injected as inline `<style>`. Rules are deduplicated and junk-filtered (universal selectors, Tailwind variable resets, `prefers-reduced-motion`).
 
 ### `viewport`
 
@@ -67,8 +120,8 @@ Rules are collected from all accessible stylesheets. Cross-origin stylesheets ar
   "width": 1440,
   "height": 900,
   "mode": "desktop",
-  "activeMedia": ["@media (min-width: 768px)"],
-  "inactiveMedia": ["@media (max-width: 767px)"]
+  "activeMedia": ["(min-width: 768px)", "(hover: hover)"],
+  "inactiveMedia": ["(max-width: 767px)"]
 }
 ```
 
@@ -76,8 +129,10 @@ Rules are collected from all accessible stylesheets. Cross-origin stylesheets ar
 |-------|:-:|-------------|
 | `width`, `height` | yes | `window.innerWidth` / `innerHeight` in px |
 | `mode` | yes | `"mobile"` (<768), `"tablet"` (768-1023), or `"desktop"` (1024+) |
-| `activeMedia` | no | Media queries from this element's CSS rules that currently match |
-| `inactiveMedia` | no | Media queries that don't currently match |
+| `activeMedia` | no | Media queries from captured elements' CSS rules that currently match |
+| `inactiveMedia` | no | Media queries that exist in CSS but don't currently match |
+
+Media queries are merged across all captured elements — `activeMedia` and `inactiveMedia` are deduplicated sets.
 
 ### `semantics`
 
@@ -86,13 +141,13 @@ Present only when accessibility-relevant data exists on the element.
 | Field | Description |
 |-------|-------------|
 | `role` | Explicit ARIA role |
-| `accessibleName` | Computed accessible name |
+| `accessibleName` | Computed from: `aria-labelledby` → `aria-label` → `alt` → `title` → `label[for]` → `placeholder` |
 | `disabled`, `checked`, `required`, `readOnly` | Interactive states (only when true) |
 | `ariaHidden` | `true` when `aria-hidden="true"` |
 | `ariaExpanded` | Boolean, from `aria-expanded` |
 | `ariaPressed` | Value of `aria-pressed` |
 | `formAction`, `formMethod` | From closest `<form>` or element's own `formAction` |
-| `formFields` | Array of form field descriptors (up to 20): `{ tag, type, name, label }` |
+| `formFields` | Array of form field descriptors (up to 20): `{ tag, type, name, placeholder, label, required }` |
 
 ### `pseudoElements`
 
@@ -101,21 +156,134 @@ Present only when `::before` or `::after` have non-empty `content`.
 ```json
 {
   "::before": {
-    "content": "\"→\"",
+    "content": "\"\\2192\"",
     "color": "rgb(0, 0, 0)",
     "font-size": "16px"
   }
 }
 ```
 
+Properties tracked: `content`, `display`, `position`, `top`, `right`, `bottom`, `left`, `width`, `height`, `background`, `color`, `font-size`, `font-family`, `border`, `border-radius`. Only non-default values included.
+
 ### `loadedFonts`
 
-Array of font family names that are both declared in the element's `font-family` and loaded via the Font Loading API. Example: `["Inter", "Roboto"]`.
+Array of font family names that are both declared in the element's `font-family` and confirmed loaded via the Font Loading API. Example: `["Inter", "Roboto"]`.
 
-## Why This Format?
+### `relationships`
 
-1. **`<chrome-capture>` tags** — act as a sentinel so LLMs can reliably detect and parse the captured data in a conversation
-2. **Computed styles over raw CSS** — raw stylesheets have cascading, specificity, and inheritance; computed styles show the final resolved values the browser actually uses
-3. **CSS rules included too** — provide semantic context (class names, selectors, media queries) that computed styles alone don't carry
-4. **`outerHTML` preserved** — lets the LLM see the actual DOM structure, attributes, and children
-5. **Non-default filtering** — removes noise from hundreds of default CSS values, keeping only what defines the element's unique appearance
+Present when 2+ elements are captured. Describes how they relate in the DOM and spatially.
+
+```json
+[
+  {
+    "elements": [0, 1],
+    "dom": "parent-child",
+    "spatial": "above"
+  },
+  {
+    "elements": [0, 2],
+    "dom": "siblings",
+    "spatial": "left-of"
+  }
+]
+```
+
+| Field | Description |
+|-------|-------------|
+| `elements` | Pair of indices into `elements[]` |
+| `dom` | `"parent-child"`, `"child-parent"`, or `"siblings"`. Omitted if elements are unrelated in DOM |
+| `spatial` | `"above"`, `"below"`, `"left-of"`, `"right-of"`, or `"overlaps"` (20px tolerance) |
+
+---
+
+## Envelope (layout mode)
+
+Layout mode captures a spatial block tree — rectangles with names and positions, no HTML or CSS. Designed for page-level prototyping.
+
+```json
+{
+  "url": "https://example.com",
+  "title": "Page Title",
+  "timestamp": "2026-04-23T14:18:53.495Z",
+  "viewport": { "width": 1440, "height": 900, "mode": "desktop" },
+  "layouts": [ ... ]
+}
+```
+
+### `layouts[]` entries
+
+Each layout capture:
+
+```json
+{
+  "selector": "div.page-wrapper",
+  "tag": "div",
+  "rect": { "x": 0, "y": 0, "width": 1440, "height": 3200 },
+  "tree": { ... }
+}
+```
+
+### Layout tree nodes
+
+The `tree` is a recursive structure. Each node:
+
+```json
+{
+  "tag": "div",
+  "name": ".sidebar",
+  "rect": { "x": 0, "y": 73, "width": 280, "height": 900 },
+  "children": [ ... ],
+  "repeat": 12
+}
+```
+
+| Field | Always present | Description |
+|-------|:-:|-------------|
+| `tag` | yes | HTML tag name |
+| `name` | yes | Human-readable label: `role` → `aria-label` → `#id` → `.first-class` → `tag` |
+| `rect` | yes | Position and size relative to the captured root element (not viewport) |
+| `children` | no | Child nodes |
+| `repeat` | no | When 3+ consecutive siblings have the same tag, class, and dimensions, only the first is walked. `repeat` indicates how many actual siblings exist |
+
+**Tree construction rules:**
+
+- Max depth: 8 levels
+- Max nodes: 500
+- Min size: 20px (both width and height) — smaller elements are skipped
+- Hidden elements (`display: none`, `visibility: hidden`, zero-size) are skipped
+- SVGs are treated as opaque leaf nodes (tag `svg`, name from `aria-label` or `"icon"`)
+- Inline text elements (`span`, `a`, `em`, etc.) without children are skipped unless they're large (>100px wide or >40px tall)
+- Single-child chains are collapsed: if a node has exactly one child with similar dimensions (within 10px), the parent is dropped and the child takes its place
+
+---
+
+## HTML sanitization
+
+The `outerHTML` field is cleaned before output:
+
+**Removed elements:** `script`, `iframe`, `noscript`, `ins.adsbygoogle`, ad containers, resize sensors, non-chromecap `<style>` tags, and the Chrome Capture panel itself (detected by z-index).
+
+**Removed attributes:**
+- Inline event handlers (`onclick`, `onmouseover`, etc.)
+- Tracker data attributes: `data-ad-*`, `data-google-*`, `data-gtm-*`, `data-fb-*`, `data-analytics-*`, `data-track-*`, `data-segment-*`, `data-amplitude-*`, `data-mixpanel-*`, `data-hj-*`, `data-hotjar-*`, `data-heap-*`, `data-intercom-*`, `data-pendo-*`, `data-clarity-*`, `data-ga-*`
+- Framework internals: `data-astro-cid-*`, `data-v-*`, `data-reactid`, `data-reactroot`, `data-svelte-*`, `ng-reflect-*`, and similar
+
+**Removed from HTML string:** all HTML comments (`<!-- ... -->`)
+
+**Structure mode additionally:** removes all text nodes and replaces large SVGs (>500 chars) with placeholder `<svg>` elements retaining only `width`, `height`, `viewBox`, `class`, `aria-label`, and `aria-hidden`.
+
+---
+
+## Design decisions
+
+1. **Envelope with hoisted fields** — `url`, `title`, `timestamp`, `viewport` are page-level facts, not per-element. Hoisting avoids repetition and makes the data model honest.
+
+2. **CSS rule pool with refs** — a page with 50 CSS rules might match 20 of them across 5 captured elements. Without deduplication, those 20 rules get serialized 5 times. The pool stores each rule once; elements carry integer refs.
+
+3. **Computed styles + CSS rules** — computed styles show the final resolved values the browser uses. CSS rules show the semantic context (class names, media queries, pseudo-states). Both are needed: computed for accuracy, rules for understanding responsive/interactive behavior.
+
+4. **Non-default filtering** — browsers compute ~300 CSS properties per element, most at their default values. Only non-default values are included, cutting noise by ~90%.
+
+5. **`<chrome-capture>` sentinel tags** — plain JSON in a conversation is ambiguous. The tag makes it unambiguous: this is captured UI data, not user text.
+
+6. **LLM instruction hint** — a short instruction string is prepended to the JSON inside the tag. It guides the LLM on common tasks without requiring the user to write a prompt from scratch.

@@ -699,7 +699,6 @@
         timestamp: new Date().toISOString(),
         viewport: mkViewport(),
       };
-      if (fw) layoutEnvelope.frameworks = fw;
       layoutEnvelope.layouts = layoutCaps.map(function(cap) {
         return { selector: cap.selector, tag: cap.tag, rect: cap.rect, tree: cap.tree };
       });
@@ -729,7 +728,6 @@
       timestamp: new Date().toISOString(),
       viewport: mergedVp,
     };
-    if (fw) envelope.frameworks = fw;
     var rels = buildRelationships();
     if (rels) envelope.relationships = rels;
     var rulePool = [];
