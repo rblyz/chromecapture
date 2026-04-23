@@ -24,7 +24,7 @@
   const captures = [];
   let picking = false;
   let hoverEl = null;
-  let captureMode = 'all'; // 'all' | 'structure'
+  let captureMode = 'all'; // 'all' | 'structure' | 'layout'
 
   const el = (tag, css, txt) => {
     const e = document.createElement(tag);
@@ -72,12 +72,12 @@
     'background:' + C.bgPanel + ';color:' + C.txSec + ';cursor:pointer;' +
     'font:10px/1.4 ' + FONT + ';white-space:nowrap;');
   modeBtn.textContent = 'all';
-  modeBtn.title = 'Toggle capture mode: all / structure (no text, simplified SVG)';
+  modeBtn.title = 'Toggle capture mode: all / structure / layout';
   modeBtn.onclick = () => {
-    captureMode = captureMode === 'all' ? 'structure' : 'all';
+    captureMode = captureMode === 'all' ? 'structure' : captureMode === 'structure' ? 'layout' : 'all';
     modeBtn.textContent = captureMode;
-    modeBtn.style.background = captureMode === 'structure' ? C.accent : C.bgPanel;
-    modeBtn.style.color = captureMode === 'structure' ? '#fff' : C.txSec;
+    modeBtn.style.background = captureMode === 'all' ? C.bgPanel : C.accent;
+    modeBtn.style.color = captureMode === 'all' ? C.txSec : '#fff';
   };
   header.append(dot, title, modeBtn, closeBtn);
 
@@ -467,7 +467,127 @@
     return Object.keys(s).length ? s : undefined;
   }
 
+  // --- Layout mode -----------------------------------------------------------
+  var LAYOUT_MAX_DEPTH = 8;
+  var LAYOUT_MAX_NODES = 500;
+  var LAYOUT_MIN_SIZE = 20;
+  var LAYOUT_INLINE = new Set(['SPAN','A','EM','STRONG','B','I','U','S','SUB','SUP','SMALL','ABBR','CODE','MARK','Q','CITE','DFN','KBD','SAMP','VAR','TIME','BDO','BDI','WBR','LABEL']);
+
+  function layoutName(el) {
+    var role = el.getAttribute('role');
+    if (role) return role;
+    var label = el.getAttribute('aria-label');
+    if (label) return label.slice(0, 40);
+    if (el.id && !/^\d/.test(el.id) && el.id.length < 30) return '#' + el.id;
+    var cls = (el.getAttribute('class') || '').trim().split(/\s+/).filter(function(c) { return c && !/^[a-z]{1,3}-[a-z0-9]{4,8}$/.test(c) && c.length < 30; })[0];
+    if (cls) return '.' + cls;
+    return el.tagName.toLowerCase();
+  }
+
+  function captureLayout(root) {
+    var rootRect = root.getBoundingClientRect();
+    var nodeCount = { n: 0 };
+
+    function walk(el, depth) {
+      if (nodeCount.n >= LAYOUT_MAX_NODES) return null;
+      if (depth > LAYOUT_MAX_DEPTH) return null;
+      var cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return null;
+      if (el.offsetWidth === 0 && el.offsetHeight === 0) return null;
+      var r = el.getBoundingClientRect();
+      if (r.width < LAYOUT_MIN_SIZE && r.height < LAYOUT_MIN_SIZE) return null;
+      // Skip Chrome Capture panel
+      if (panel.contains(el)) return null;
+      // Don't recurse into SVGs — treat as opaque leaf blocks
+      if (el.tagName === 'SVG' || el.closest('svg')) {
+        nodeCount.n++;
+        return {
+          tag: 'svg',
+          name: el.getAttribute('aria-label') || 'icon',
+          rect: {
+            x: Math.round(r.left - rootRect.left),
+            y: Math.round(r.top - rootRect.top),
+            width: Math.round(r.width),
+            height: Math.round(r.height),
+          },
+        };
+      }
+
+      // Early repeat detection: before walking all children, find runs of same tag+class+size
+      // and only walk the first of each run to save node budget
+      var rawKids = el.children;
+      var children = [];
+      var childSig = function(c) {
+        var cr = c.getBoundingClientRect();
+        return c.tagName + '|' + (c.getAttribute('class') || '').trim().split(/\s+/)[0] + '|' + Math.round(cr.width) + 'x' + Math.round(cr.height);
+      };
+      var ci = 0;
+      while (ci < rawKids.length) {
+        var csig = childSig(rawKids[ci]);
+        var crun = 1;
+        while (ci + crun < rawKids.length && childSig(rawKids[ci + crun]) === csig) crun++;
+        if (crun >= 3) {
+          // Walk only the first, mark with repeat count
+          var first = walk(rawKids[ci], depth + 1);
+          if (first) { first.repeat = crun; children.push(first); }
+        } else {
+          for (var ck = 0; ck < crun; ck++) {
+            var child = walk(rawKids[ci + ck], depth + 1);
+            if (child) children.push(child);
+          }
+        }
+        ci += crun;
+      }
+
+      // Skip inline text elements unless they have significant block size or children
+      if (LAYOUT_INLINE.has(el.tagName) && children.length === 0 && r.width < 100 && r.height < 40) return null;
+
+      // Collapse single-child chains: if this node has exactly one child and similar dimensions, skip this level
+      if (children.length === 1) {
+        var cr = children[0].rect;
+        var dw = Math.abs(r.width - cr.width - cr.x);
+        var dh = Math.abs(r.height - cr.height - cr.y);
+        if (dw < 10 && dh < 10) return children[0];
+      }
+
+      nodeCount.n++;
+      var node = {
+        tag: el.tagName.toLowerCase(),
+        name: layoutName(el),
+        rect: {
+          x: Math.round(r.left - rootRect.left),
+          y: Math.round(r.top - rootRect.top),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        },
+      };
+      if (children.length) node.children = children;
+      return node;
+    }
+
+    return walk(root, 0);
+  }
+
   async function capture(target) {
+    // Layout mode: capture subtree geometry, auto-stop picker
+    if (captureMode === 'layout') {
+      var tree = captureLayout(target);
+      if (!tree) return;
+      var rootR = target.getBoundingClientRect();
+      var layoutCap = {
+        _layout: true,
+        _el: target,
+        mode: 'layout',
+        selector: selApprox(target),
+        tag: target.tagName.toLowerCase(),
+        rect: { x: Math.round(rootR.x), y: Math.round(rootR.y), width: Math.round(rootR.width), height: Math.round(rootR.height) },
+        tree: tree,
+      };
+      captures.push(layoutCap);
+      stop();
+      render();
+      return;
+    }
     await fixCorsSheets();
     const r = target.getBoundingClientRect();
     const cleaned = cleanHTML(target);
@@ -555,16 +675,45 @@
     return rels;
   }
 
+  function countNodes(node) {
+    var c = 1;
+    if (node.children) node.children.forEach(function(ch) { c += countNodes(ch); });
+    return c;
+  }
+
   function render() {
     var fw = detectFrameworks();
     var fwAttr = fw ? ' frameworks="' + fw.join(',') + '"' : '';
     if (!captures.length) { out.value = ''; list.replaceChildren(); list.appendChild(empty); return; }
-    // Per-element fields to hoist to the envelope
+
+    var parts = [];
+
+    // Layout captures → separate <chrome-capture mode="layout">
+    var layoutCaps = captures.filter(function(c) { return c._layout; });
+    if (layoutCaps.length) {
+      var layoutEnvelope = {
+        url: location.href,
+        title: document.title,
+        timestamp: new Date().toISOString(),
+        viewport: { width: window.innerWidth, height: window.innerHeight, mode: window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop' },
+      };
+      if (fw) layoutEnvelope.frameworks = fw;
+      layoutEnvelope.layouts = layoutCaps.map(function(cap) {
+        return { selector: cap.selector, tag: cap.tag, rect: cap.rect, tree: cap.tree };
+      });
+      var layoutHint = '[This is a spatial layout map of a webpage. Each node is a UI block with its position and size (in px) relative to the captured root element. '
+        + 'Build a prototype using simple colored rectangles with labels matching these names and dimensions. Use a single HTML file with inline CSS. '
+        + 'After generating the prototype, ask the user which section they want to detail first — then they can capture that section in "all" mode for full styles.]\\n';
+      parts.push('<chrome-capture mode="layout"' + fwAttr + '>' + layoutHint + JSON.stringify(layoutEnvelope) + '</chrome-capture>');
+    }
+
+    // Normal captures (all/structure) → separate <chrome-capture>
+    var normalCaps = captures.filter(function(c) { return !c._layout; });
+    if (normalCaps.length) {
     var hoisted = ['url', 'title', 'timestamp', 'viewport'];
-    // Merge viewport media queries from all elements
     var mergedVp = { width: window.innerWidth, height: window.innerHeight, mode: window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop' };
     var activeSet = new Set(), inactiveSet = new Set();
-    captures.forEach(function(cap) {
+    normalCaps.forEach(function(cap) {
       if (cap.viewport) {
         (cap.viewport.activeMedia || []).forEach(function(m) { activeSet.add(m); });
         (cap.viewport.inactiveMedia || []).forEach(function(m) { inactiveSet.add(m); });
@@ -572,7 +721,6 @@
     });
     if (activeSet.size) mergedVp.activeMedia = Array.from(activeSet);
     if (inactiveSet.size) mergedVp.inactiveMedia = Array.from(inactiveSet);
-    // Build envelope
     var envelope = {
       url: location.href,
       title: document.title,
@@ -582,10 +730,9 @@
     if (fw) envelope.frameworks = fw;
     var rels = buildRelationships();
     if (rels) envelope.relationships = rels;
-    // Deduplicate cssRules across elements into a shared pool
     var rulePool = [];
     var ruleIndex = {};
-    envelope.elements = captures.map(function(cap) {
+    envelope.elements = normalCaps.map(function(cap) {
       var el = {};
       var lm = cap._el && cap._el.isConnected ? nearestLandmark(cap._el) : null;
       if (lm) el.landmark = lm;
@@ -611,7 +758,10 @@
       + 'Common tasks: replicate this design in code, analyze layout and styles, suggest improvements. '
       + 'If the capture is large, focus on page structure first, then ask the user to capture specific sections for detail. '
       + 'If the user hasn\\x27t specified a task, ask what they need.]\\n';
-    out.value = '<chrome-capture' + fwAttr + '>' + hint + JSON.stringify(envelope) + '</chrome-capture>';
+    parts.push('<chrome-capture' + fwAttr + '>' + hint + JSON.stringify(envelope) + '</chrome-capture>');
+    }
+
+    out.value = parts.join('\\n');
 
     list.replaceChildren();
     captures.forEach((cap, i) => {
@@ -625,15 +775,21 @@
         cap.tag);
       const capJson = JSON.stringify(cap, (k, v) => k === '_el' ? undefined : v);
       const words = capJson.split(/\s+/).length;
+      var modeBg = cap.mode === 'all' ? C.bgMuted : C.accent;
+      var modeFg = cap.mode === 'all' ? C.txTer : '#fff';
+      var modeLabel = cap.mode === 'layout' ? 'lay' : cap.mode === 'structure' ? 'str' : 'all';
       const modeTag = el('span',
         'padding:1px 4px;border-radius:3px;font-size:8px;font-weight:500;' +
         'font-family:ui-monospace,Menlo,monospace;' +
-        'background:' + (cap.mode === 'structure' ? C.accent : C.bgMuted) + ';' +
-        'color:' + (cap.mode === 'structure' ? '#fff' : C.txTer) + ';',
-        cap.mode === 'structure' ? 'str' : 'all');
+        'background:' + modeBg + ';' +
+        'color:' + modeFg + ';',
+        modeLabel);
+      var sizeText = cap._layout
+        ? countNodes(cap.tree) + ' nodes'
+        : words > 999 ? (words / 1000).toFixed(1) + 'k w' : words + ' w';
       const size = el('span',
         'flex:1;font-size:10px;color:' + C.txTer + ';font-family:ui-monospace,Menlo,monospace;white-space:nowrap;',
-        words > 999 ? (words / 1000).toFixed(1) + 'k w' : words + ' w');
+        sizeText);
       const dim = el('span',
         'font-size:10px;color:' + C.txTer + ';font-family:ui-monospace,Menlo,monospace;white-space:nowrap;',
         cap.rect.width + '\u00d7' + cap.rect.height);
