@@ -26,6 +26,10 @@ That's it. No build, no extension, no dependencies.
 
 ![Paste into any LLM](docs/images/ask-any-llm-to-code.png)
 
+4. **Layout mode** — switch to `layout`, click a container to capture the whole page structure, then ask the LLM to build a prototype
+
+![Layout mode with Gemini](docs/images/gemini-example.png)
+
 ### Tips
 
 - **Esc** — stop picking
