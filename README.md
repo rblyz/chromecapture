@@ -49,9 +49,9 @@ You can mix modes — capture a page header in `layout` and a button in `all`. E
 
 ## What gets captured
 
-**Included:** clean HTML, computed styles (non-default only), CSS rules with media queries, pseudo-states (`:hover`, `:focus`, etc.), CSS variables resolved to values, viewport context with responsive breakpoints, accessibility data (roles, names, ARIA states, form fields), pseudo-elements (`::before`/`::after`), loaded fonts, landmark context, element relationships (DOM + spatial), and detected frameworks.
+**Included:** clean HTML, computed styles (non-default only), CSS rules with media queries, pseudo-states (`:hover`, `:focus`, etc.), CSS variable tokens as a separate dictionary, viewport context with responsive breakpoints, XPath for element addressing, accessibility data (roles, names, ARIA states, form fields), developer hints (`data-testid`, `data-cy`, `data-qa`), pseudo-elements (`::before`/`::after`), loaded fonts, landmark context, element relationships (DOM + spatial), and detected frameworks.
 
-**Stripped automatically:** scripts, iframes, ads, trackers (Google/Facebook/Segment/Hotjar/etc.), framework internals (React/Vue/Angular/Svelte/Astro), inline event handlers, HTML comments, the capture panel itself.
+**Stripped automatically:** scripts, iframes, ads, trackers (Google/Facebook/Segment/Hotjar/etc.), framework internals (React/Vue/Angular/Svelte/Astro), inline event handlers, HTML comments, base64 data URIs (replaced with placeholders preserving dimensions), the capture panel itself. Long `innerText` is truncated at 3000 characters.
 
 **Detected frameworks:** Vue, React, Next.js, Nuxt, Angular, Svelte, jQuery, Tailwind, Bootstrap.
 
@@ -75,7 +75,7 @@ When multiple elements are captured, `relationships[]` describes how they relate
 
 - **CSP restrictions** — some sites (GitHub, Google) block bookmarklets
 - **Closed Shadow DOM** — elements inside closed shadow roots are not accessible
-- **Cross-origin stylesheets** — fetched via `fetch()` when same-origin, skipped when truly cross-origin
+- **Cross-origin stylesheets** — re-fetched via `fetch()` when CORS headers are present, silently skipped otherwise
 
 ## Development
 

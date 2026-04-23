@@ -72,14 +72,16 @@ Each object in `elements[]`:
 |-------|------|:-:|-------------|
 | `mode` | `string` | yes | `"all"` or `"structure"` |
 | `selector` | `string` | yes | Approximate CSS selector (`tag#id`, `tag.class`, or `tag`) |
+| `xpath` | `string` | yes | XPath to the element. Stops at nearest `id` ancestor (e.g. `/header[@id="header"]/div[1]/button[2]`) |
 | `tag` | `string` | yes | HTML tag name (lowercase) |
 | `landmark` | `string` | no | Nearest landmark ancestor: `header`, `nav`, `main`, `aside`, `footer`, `section`, `article` |
-| `innerText` | `string` | yes | Text content. In `structure` mode this comes from the original element (before text node removal) |
+| `innerText` | `string` | yes | Text content (truncated at 3000 chars with `… [truncated]`). In `structure` mode this comes from the original element (before text node removal) |
 | `outerHTML` | `string` | yes | Sanitized HTML (see sanitization below) |
 | `rect` | `object` | yes | Bounding box `{ x, y, width, height }` in viewport px |
 | `computedStyles` | `object` | yes | Non-default computed CSS properties |
 | `cssRuleRefs` | `array` | no | Indices into the envelope's `cssRules[]` pool |
-| `semantics` | `object` | no | Accessibility and form data |
+| `tokens` | `object` | no | CSS variable dictionary: `{ "--color-primary": "#7413dc" }`. Collected from `var()` references in matched CSS rules |
+| `semantics` | `object` | no | Accessibility and form data (see below) |
 | `pseudoElements` | `object` | no | Computed styles for `::before` / `::after` |
 | `loadedFonts` | `array` | no | Font families used by the element that are actually loaded on the page |
 
@@ -111,7 +113,21 @@ Each rule in the pool:
 | `media` | no | `@media` or `@supports` condition string |
 | `states` | no | Pseudo-class states (`["hover", "focus"]`). Present when the rule targets a state the element isn't currently in |
 
-Rules are collected from all accessible stylesheets. Same-origin stylesheets that throw `SecurityError` on `.cssRules` access are re-fetched via `fetch()` and injected as inline `<style>`. Rules are deduplicated and junk-filtered (universal selectors, Tailwind variable resets, `prefers-reduced-motion`).
+Rules are collected from all accessible stylesheets. Stylesheets that throw `SecurityError` on `.cssRules` access are re-fetched via `fetch()` and injected as inline `<style>` — this works for any CDN that serves CORS headers. Rules are deduplicated and junk-filtered (universal selectors, Tailwind variable resets, `prefers-reduced-motion`).
+
+### `tokens`
+
+A dictionary of CSS custom properties referenced by the element's matched CSS rules, resolved to their computed values:
+
+```json
+{
+  "--color-57": "#7413dc",
+  "--font-size-sm": "12px",
+  "--spacing-4": "16px"
+}
+```
+
+Collected during `var()` resolution — no extra DOM traversal. Shows the element's design token palette at a glance. Only present when CSS rules contain `var()` references.
 
 ### `viewport`
 
@@ -141,13 +157,14 @@ Present only when accessibility-relevant data exists on the element.
 | Field | Description |
 |-------|-------------|
 | `role` | Explicit ARIA role |
-| `accessibleName` | Computed from: `aria-labelledby` → `aria-label` → `alt` → `title` → `label[for]` → `placeholder` |
+| `accessibleName` | Computed from: `aria-labelledby` → `aria-label` → `alt` → `title` → `label[for]` → `placeholder` → `textContent` (if ≤80 chars) |
 | `disabled`, `checked`, `required`, `readOnly` | Interactive states (only when true) |
 | `ariaHidden` | `true` when `aria-hidden="true"` |
 | `ariaExpanded` | Boolean, from `aria-expanded` |
 | `ariaPressed` | Value of `aria-pressed` |
 | `formAction`, `formMethod` | From closest `<form>` or element's own `formAction` |
 | `formFields` | Array of form field descriptors (up to 20): `{ tag, type, name, placeholder, label, required }` |
+| `hints` | Developer-assigned data attributes: `data-testid`, `data-test-id`, `data-test`, `data-cy`, `data-qa`, `data-atid`, `data-analytics-name`. Stored as `{ "testid": "search-submit", "atid": "nav-config" }` (with `data-` prefix stripped) |
 
 ### `pseudoElements`
 
@@ -267,6 +284,8 @@ The `outerHTML` field is cleaned before output:
 - Inline event handlers (`onclick`, `onmouseover`, etc.)
 - Tracker data attributes: `data-ad-*`, `data-google-*`, `data-gtm-*`, `data-fb-*`, `data-analytics-*`, `data-track-*`, `data-segment-*`, `data-amplitude-*`, `data-mixpanel-*`, `data-hj-*`, `data-hotjar-*`, `data-heap-*`, `data-intercom-*`, `data-pendo-*`, `data-clarity-*`, `data-ga-*`
 - Framework internals: `data-astro-cid-*`, `data-v-*`, `data-reactid`, `data-reactroot`, `data-svelte-*`, `ng-reflect-*`, and similar
+
+**Replaced in HTML:** base64 data URIs in `src` attributes are replaced with `data:image/type;base64,[truncated, WxH]` preserving MIME type and dimensions from element attributes.
 
 **Removed from HTML string:** all HTML comments (`<!-- ... -->`)
 
