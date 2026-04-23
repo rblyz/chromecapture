@@ -732,7 +732,7 @@
 
   function render() {
     var fw = detectFrameworks();
-    var fwAttr = fw ? ' frameworks="' + fw.join(',').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '"' : '';
+    var fwAttr = fw ? ' frameworks="' + fw.join(',').replace(/&/g, '&amp;').replace(/\x22/g, '&quot;').replace(/</g, '&lt;') + '"' : '';
     if (!captures.length) { out.value = ''; list.replaceChildren(); list.appendChild(empty); return; }
 
     var parts = [];
