@@ -30,9 +30,13 @@ That's it. No build, no extension, no dependencies.
 
 - **Esc** — stop picking
 - **Alt+P** (Option+P on Mac) — toggle picker without clicking, keeps dropdowns/modals open
-- **Mode toggle** (`all` / `structure`) — `all` captures everything as-is; `structure` strips text nodes and replaces complex inline SVGs with placeholders, keeping only the layout skeleton
+- **Mode toggle** (`all` / `structure` / `layout`) — click to cycle:
+  - `all` — captures everything as-is (HTML, styles, CSS rules)
+  - `structure` — strips text nodes and replaces complex inline SVGs with placeholders, keeping only the layout skeleton
+  - `layout` — captures a spatial block tree of the entire subtree (just rectangles + names, no HTML/CSS). Click a container → get a geometry map → LLM builds a prototype with colored rectangles → you detail sections one by one
 - **X** — remove individual captures before copying
-- **Smaller is better** — the smaller the captured element, the more detail the LLM can work with. Start with a large section in `structure` mode to get the layout, then capture individual components in `all` mode for full detail
+- **Mixing modes** — you can capture some elements in `layout`, others in `all` or `structure` — each mode emits its own `<chrome-capture>` tag
+- **Smaller is better** — the smaller the captured element, the more detail the LLM can work with. Start with `layout` on the whole page for the big picture, then capture individual components in `all` mode for full detail
 
 ## What gets captured
 
