@@ -338,9 +338,18 @@
   // --- Capture --------------------------------------------------------------
   function selApprox(target) {
     const tag = target.tagName.toLowerCase();
-    if (target.id) return tag + '#' + target.id;
-    const cls = (target.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean)[0];
-    return cls ? tag + '.' + cls : tag;
+    if (target.id && /^[a-zA-Z][\w-]*$/.test(target.id)) return tag + '#' + target.id;
+    const cls = (target.getAttribute('class') || '').trim().split(/\s+/).filter(c => c && !/^[a-z]{1,3}-[\da-z]{4,8}$/.test(c))[0];
+    const base = cls ? tag + '.' + cls : tag;
+    const parent = target.parentElement;
+    if (parent) {
+      const siblings = parent.querySelectorAll(':scope > ' + base);
+      if (siblings.length > 1) {
+        const idx = [...siblings].indexOf(target) + 1;
+        return base + ':nth-of-type(' + idx + ')';
+      }
+    }
+    return base;
   }
   function getXPath(target) {
     const parts = [];
@@ -378,10 +387,11 @@
       n.removeAttribute('data-island-props');
     });
     // Strip inline event handlers, tracker attrs, and framework internals
-    const FW_RE = /^(data-astro-cid|data-astro-source|data-v-|data-hk|data-svelte|data-sveltekit|data-reactid|data-reactroot|data-server-rendered|data-fetch-key|data-hydrate|data-ssr|data-lit|data-nscript|_ng|ng-reflect)/;
+    const FW_RE = /^(data-astro-cid|data-astro-source|data-v-|data-hk|data-svelte|data-sveltekit|data-reactid|data-reactroot|data-server-rendered|data-fetch-key|data-hydrate|data-ssr|data-lit|data-nscript|_ng|ng-reflect|data-ved|data-usg|data-ei|data-hl|data-lk|data-s|data-iml|data-csiid|data-atf)/;
+    const GOOGLE_JS_RE = /^(jscontroller|jsaction|jsname|jsmodel|jsdata|jsshadow|jstcache|jsslot)$/;
     clone.querySelectorAll('*').forEach(n => {
       for (const attr of [...n.attributes]) {
-        if (attr.name.startsWith('on') || TRACKER_RE.test(attr.name) || FW_RE.test(attr.name)) {
+        if (attr.name.startsWith('on') || TRACKER_RE.test(attr.name) || FW_RE.test(attr.name) || GOOGLE_JS_RE.test(attr.name)) {
           n.removeAttribute(attr.name);
         }
       }
@@ -722,7 +732,7 @@
 
   function render() {
     var fw = detectFrameworks();
-    var fwAttr = fw ? ' frameworks="' + fw.join(',') + '"' : '';
+    var fwAttr = fw ? ' frameworks="' + fw.join(',').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '"' : '';
     if (!captures.length) { out.value = ''; list.replaceChildren(); list.appendChild(empty); return; }
 
     var parts = [];
@@ -739,9 +749,8 @@
       layoutEnvelope.layouts = layoutCaps.map(function(cap) {
         return { selector: cap.selector, tag: cap.tag, rect: cap.rect, tree: cap.tree };
       });
-      var layoutHint = '[This is a spatial layout map of a webpage. Each node is a UI block with its position and size (in px) relative to the captured root element. '
-        + 'Build a prototype using simple colored rectangles with labels matching these names and dimensions. Use a single HTML file with inline CSS. '
-        + 'After generating the prototype, ask the user which section they want to detail first — then they can capture that section in "all" mode for full styles.]\\n';
+      var layoutHint = '[Spatial layout map. Each node: tag, name, rect (px relative to root). repeat=N means N identical siblings. '
+        + 'Ask what to do: prototype as HTML, analyze structure, or capture sections in "all" mode for full styles.]\\n';
       parts.push('<chrome-capture mode="layout"' + fwAttr + '>' + layoutHint + JSON.stringify(layoutEnvelope) + '</chrome-capture>');
     }
 
@@ -791,10 +800,9 @@
       return entry;
     });
     if (rulePool.length) envelope.cssRules = rulePool;
-    var hint = '[This is a captured UI snippet from a real webpage. '
-      + 'Common tasks: replicate this design in code, analyze layout and styles, suggest improvements. '
-      + 'If the capture is large, focus on page structure first, then ask the user to capture specific sections for detail. '
-      + 'If the user hasn\\x27t specified a task, ask what they need.]\\n';
+    var hint = '[Captured UI from a live webpage. cssRuleRefs are indices into the top-level cssRules array. '
+      + 'tokens map CSS variables to resolved values. '
+      + 'If no task specified, ask what to do: reproduce, restyle, debug, or capture more sections.]\\n';
     parts.push('<chrome-capture' + fwAttr + '>' + hint + JSON.stringify(envelope) + '</chrome-capture>');
     }
 
