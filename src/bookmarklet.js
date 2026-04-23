@@ -199,8 +199,8 @@
     if (media && /prefers-reduced-motion/.test(media)) return true;
     return false;
   }
-  // Re-fetch same-origin stylesheets that throw SecurityError on .cssRules
-  // (e.g. file:// or sandboxed contexts) and inject as inline <style>.
+  // Re-fetch stylesheets that throw SecurityError on .cssRules and inject
+  // as inline <style>. Tries both same-origin and cross-origin (if CORS allows).
   let _corsFixed = false;
   async function fixCorsSheets() {
     if (_corsFixed) return;
@@ -209,7 +209,6 @@
     for (const sh of document.styleSheets) {
       try { sh.cssRules; continue; } catch {} // already accessible
       if (!sh.href) continue;
-      try { if (new URL(sh.href).origin !== location.origin) continue; } catch {}
       fetches.push(
         fetch(sh.href).then(r => r.text()).then(css => {
           const s = document.createElement('style');
@@ -222,16 +221,17 @@
     await Promise.all(fetches);
   }
   // Resolve var(--xxx) references to their computed values
-  function resolveVars(cssText, target) {
+  function resolveVars(cssText, target, tokens) {
     const root = getComputedStyle(document.documentElement);
     const elCS = getComputedStyle(target);
     return cssText.replace(/var\(--[\w-]+(?:\s*,\s*[^)]+)?\)/g, m => {
       const name = m.match(/var\((--[\w-]+)/)[1];
       const val = elCS.getPropertyValue(name).trim() || root.getPropertyValue(name).trim();
+      if (val && tokens) tokens[name] = val;
       return val ? val : m;
     });
   }
-  function getRules(target) {
+  function getRules(target, tokens) {
     const acc = [];
     const seen = new Set();
     for (const sh of document.styleSheets) {
@@ -247,7 +247,7 @@
       return true;
     }).map(r => {
       if (r.css.includes('var(--')) {
-        r.cssResolved = resolveVars(r.css, target);
+        r.cssResolved = resolveVars(r.css, target, tokens);
       }
       return r;
     });
@@ -342,6 +342,23 @@
     const cls = (target.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean)[0];
     return cls ? tag + '.' + cls : tag;
   }
+  function getXPath(target) {
+    const parts = [];
+    let node = target;
+    while (node && node.nodeType === 1) {
+      let tag = node.tagName.toLowerCase();
+      if (node.id) { parts.unshift(tag + '[@id="' + node.id + '"]'); break; }
+      let idx = 1;
+      let sib = node.previousElementSibling;
+      while (sib) {
+        if (sib.tagName === node.tagName) idx++;
+        sib = sib.previousElementSibling;
+      }
+      parts.unshift(tag + '[' + idx + ']');
+      node = node.parentElement;
+    }
+    return '/' + parts.join('/');
+  }
   // Clean outerHTML: remove elements that don't affect visual design
   const TRACKER_RE = /^data-(ad|google|adsbygoogle|load-complete|gtm|fb[-p]?|analytics|track|event|segment|amplitude|amp|mp|mixpanel|hj|hotjar|heap|intercom|pendo|clarity|ga4?)(-|$)/;
   const SVG_INLINE_MAX = 500;
@@ -369,6 +386,15 @@
         }
       }
     });
+    // Replace base64 data URIs with placeholder preserving dimensions
+    clone.querySelectorAll('[src^="data:"]').forEach(n => {
+      const m = n.getAttribute('src').match(/^data:(image\/[\w+]+)/);
+      const type = m ? m[1] : 'image';
+      const w = n.getAttribute('width');
+      const h = n.getAttribute('height');
+      const dim = w && h ? ', ' + w + 'x' + h : '';
+      n.setAttribute('src', 'data:' + type + ';base64,[truncated' + dim + ']');
+    });
     // Grab innerText: insert clone offscreen so browser computes spacing correctly
     clone.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none;';
     document.body.appendChild(clone);
@@ -395,7 +421,8 @@
     }
     // Strip HTML comments
     const html = clone.outerHTML.replace(/<!--[\s\S]*?-->/g, '');
-    return { html, innerText: cleanText };
+    const trimmedText = cleanText.length > 3000 ? cleanText.slice(0, 3000) + '\u2026 [truncated]' : cleanText;
+    return { html, innerText: trimmedText };
   }
 
   // --- Framework detection --------------------------------------------------
@@ -438,6 +465,8 @@
       if (lbl) return lbl.textContent.trim();
     }
     if (el.placeholder) return el.placeholder;
+    const txt = (el.textContent || '').trim();
+    if (txt.length > 0 && txt.length <= 80) return txt;
     return '';
   }
   function getSemantics(target) {
@@ -479,6 +508,11 @@
         return f;
       });
     }
+    // Developer-assigned test/analytics hints
+    const HINT_ATTRS = ['data-testid', 'data-test-id', 'data-test', 'data-cy', 'data-qa', 'data-atid', 'data-analytics-name'];
+    const hints = {};
+    HINT_ATTRS.forEach(a => { const v = target.getAttribute(a); if (v) hints[a.replace('data-', '')] = v; });
+    if (Object.keys(hints).length) s.hints = hints;
     return Object.keys(s).length ? s : undefined;
   }
 
@@ -600,6 +634,7 @@
     const cap = {
       mode: captureMode,
       selector: selApprox(target),
+      xpath: getXPath(target),
       tag: target.tagName.toLowerCase(),
       url: location.href,
       title: document.title,
@@ -608,8 +643,10 @@
       outerHTML: cleaned.html,
       rect: mkRect(r),
       computedStyles: getComputed(target),
-      cssRules: getRules(target),
     };
+    const tokens = {};
+    cap.cssRules = getRules(target, tokens);
+    if (Object.keys(tokens).length) cap.tokens = tokens;
     if (semantics) cap.semantics = semantics;
     const pseudos = getPseudos(target);
     if (pseudos) cap.pseudoElements = pseudos;
