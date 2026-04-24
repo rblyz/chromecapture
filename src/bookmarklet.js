@@ -340,9 +340,11 @@
     const tag = target.tagName.toLowerCase();
     if (target.id && /^[a-zA-Z][\w-]*$/.test(target.id)) return tag + '#' + target.id;
     const cls = (target.getAttribute('class') || '').trim().split(/\s+/).filter(c => c && !/^[a-z]{1,3}-[\da-z]{4,8}$/.test(c))[0];
-    const base = cls ? tag + '.' + cls : tag;
+    const clsEsc = cls ? cls.replace(/([^a-zA-Z0-9_-])/g, '\\$1') : null;
+    const base = clsEsc ? tag + '.' + clsEsc : tag;
     const parent = target.parentElement;
     if (parent) {
+      try { parent.querySelectorAll(':scope > ' + base); } catch(e) { return tag; }
       const siblings = parent.querySelectorAll(':scope > ' + base);
       if (siblings.length > 1) {
         const idx = [...siblings].indexOf(target) + 1;
